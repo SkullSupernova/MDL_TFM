@@ -1,0 +1,1272 @@
+### CELDA 2 ###
+# =========================================================
+# 1. Librerías estándar de Python
+# =========================================================
+import sys
+import os
+import time
+import random
+import shutil
+import copy
+from collections import Counter
+
+# =========================================================
+# 2. Manipulación de datos y matemáticas
+# =========================================================
+import numpy as np
+import pandas as pd
+
+# =========================================================
+# 3. Deep Learning: PyTorch y torchvision
+# =========================================================
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, random_split
+
+import torchvision
+import torchvision.transforms as transforms
+
+# =========================================================
+# 4. Machine Learning clásico y métricas
+# =========================================================
+import sklearn
+from sklearn.metrics import (
+    f1_score,
+    accuracy_score,
+    classification_report,
+    confusion_matrix
+)
+
+# =========================================================
+# 5. Visualización
+# =========================================================
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# =========================================================
+# 6. Procesamiento de imágenes y tipografía
+# =========================================================
+import PIL.Image as Image
+import PIL.ImageOps as ImageOps
+import PIL.ImageDraw as ImageDraw
+import PIL.ImageFont as ImageFont
+import matplotlib.font_manager as fm
+
+# =========================================================
+# 7. Entorno interactivo / notebooks
+# =========================================================
+import IPython
+from IPython.display import display, Markdown
+
+# =========================================================
+# 8. Configuración específica para notebooks
+# =========================================================
+%matplotlib inline
+
+# =========================================================
+# 9. Verificación exhaustiva de versiones
+# =========================================================
+print("=== Configuración del Entorno ===")
+print(f"Python Runtime       : {sys.version.split()[0]}")
+print(f"PyTorch Version      : {torch.__version__}")
+print(f"Torchvision Version  : {torchvision.__version__}")
+print(f"Numpy Version        : {np.__version__}")
+print(f"Pandas Version       : {pd.__version__}")
+print(f"Matplotlib Version   : {matplotlib.__version__}")
+print(f"Seaborn Version      : {sns.__version__}")
+print(f"Scikit-learn Version : {sklearn.__version__}")
+print(f"IPython Version      : {IPython.__version__}")
+
+### CELDA 4 ###
+def setup_environment():
+    """
+    Configura el dispositivo de cómputo y los parámetros del DataLoader.
+    Las decisiones priorizan estabilidad sobre paralelización agresiva en Windows.
+    """
+    print("\n=== Detección de Hardware ===")
+    
+    # Información de CPU
+    cpu_cores = os.cpu_count()
+    if cpu_cores is not None:
+        print(f"Núcleos lógicos CPU  : {cpu_cores}")
+    
+    # Configuración GPU/CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"Dispositivo          : GPU ({gpu_name})")
+        print(f"VRAM Disponible      : {vram_gb:.2f} GB")
+    else:
+        device = torch.device("cpu")
+        print("Dispositivo          : CPU")
+
+    # Configuración de Workers para DataLoader
+    if os.name == 'nt':
+        num_workers = 0
+        print("Configuración OS     : Windows (num_workers=0)")
+    else:
+        num_workers = 2
+        print("Configuración OS     : Unix/Linux (num_workers=2)")
+
+    return device, num_workers
+
+# Ejecución de la configuración
+device, NUM_WORKERS = setup_environment()
+
+print("-" * 60)
+print(f"Configuración Lista -> Device: {device} | Workers: {NUM_WORKERS}")
+
+### CELDA 6 ###
+def set_seed(seed=42):
+    """Fija las semillas para garantizar reproducibilidad en CPU y GPU."""
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    
+    # Determinismo en operaciones de convolución
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"\nSemilla global fijada en: {seed}")
+
+# Generador para reproducibilidad en DataLoaders
+g_cpu = torch.Generator()
+g_cpu.manual_seed(42)
+
+set_seed(42)
+
+### CELDA 9 ###
+# Ruta del archivo CSV
+# ruta = "chexpert_csv/train_cheXbert.csv"
+
+# Cargar el dataset, tratando '?' como valor faltante (NaN) y eliminando espacios iniciales
+# df = pd.read_csv(ruta, na_values='?', skipinitialspace=True)
+# df = pd.read_csv(ruta)
+
+### CELDA 11 ###
+ruta = "chexpert_csv/train_cheXbert.csv"
+
+# Definición semántica de las columnas
+cols_patologias = [
+    'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 'Lung Lesion',
+    'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax',
+    'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices', 'No Finding'
+]
+
+# Diccionario de optimización de tipos
+tipos_optimizados = {
+    'Sex': 'category',
+    'Frontal/Lateral': 'category',
+    'AP/PA': 'category',
+    'Age': 'float32' # Se asigna float32 como medida de seguridad ante posibles NaNs
+}
+
+# Asignación de float32 a todas las patologías para reducir huella de memoria
+for patologia in cols_patologias:
+    tipos_optimizados[patologia] = 'float32'
+
+df_ini = pd.read_csv(ruta, dtype=tipos_optimizados)
+df_ini.columns = df_ini.columns.str.strip()
+
+display(Markdown(f"**Número total de observaciones:** {df_ini.shape[0]}"))
+display(Markdown(f"**Número de variables (columnas):** {df_ini.shape[1]}"))
+display(Markdown("#### Primeras filas del dataset:"))
+display(df_ini.head())
+
+### CELDA 13 ###
+# Segmentación basada en el dominio del problema en lugar de dtypes
+metadatos_tecnicos = ['Path', 'Frontal/Lateral', 'AP/PA']
+variables_demograficas = ['Sex', 'Age']
+variables_clinicas = cols_patologias
+
+tabla_vars = f""" 
+| Categoría conceptual | Variables incluidas |
+|----------------------|---------------------|
+| **Metadatos e Identificación** | {', '.join(metadatos_tecnicos)} |
+| **Variables Demográficas** | {', '.join(variables_demograficas)} |
+| **Variables Clínicas (Objetivo)** | {', '.join(variables_clinicas)} |
+"""
+display(Markdown(tabla_vars))
+
+### CELDA 15 ###
+# -------------------------------------------------------------------------
+# Análisis de variables continuas
+# -------------------------------------------------------------------------
+display(Markdown("### Análisis descriptivo de variables continuas"))
+tabla_estats_edad = df_ini[['Age']].describe().T
+display(tabla_estats_edad)
+
+# -------------------------------------------------------------------------
+# Análisis de metadatos categóricos
+# -------------------------------------------------------------------------
+display(Markdown("### Distribución de variables categóricas (Metadatos)"))
+variables_cat = ['Sex', 'Frontal/Lateral', 'AP/PA']
+
+for col in variables_cat:
+    # dropna=False es vital para auditar la dependencia lógica en 'AP/PA'
+    conteo_cat = df_ini[col].value_counts(dropna=False).to_frame(name='Frecuencia')
+    conteo_cat['% del total'] = (conteo_cat['Frecuencia'] / len(df_ini) * 100).round(2)
+    display(Markdown(f"#### Distribución: {col}"))
+    display(conteo_cat)
+
+# -------------------------------------------------------------------------
+# Prevalencia diagnóstica detallada
+# -------------------------------------------------------------------------
+display(Markdown("### Prevalencia patológica multietiqueta (Absoluta y Relativa)"))
+
+total_obs = len(df_ini)
+stats_patologias = pd.DataFrame(index=cols_patologias)
+
+# Cálculo de la cobertura general (cuántas veces el radiólogo evalúa la región)
+stats_patologias['Menciones (No nulos)'] = df_ini[cols_patologias].count()
+stats_patologias['% Cobertura'] = (stats_patologias['Menciones (No nulos)'] / total_obs * 100).round(2).astype(str) + "%"
+
+# Función escalar para mapear prevalencia intra-clase
+def formatear_columna(condicion):
+    conteo = condicion.sum()
+    pct = (conteo / total_obs * 100).round(2)
+    return conteo.astype(str) + " (" + pct.astype(str) + "%)"
+
+# Desglose vectorizado del diagnóstico
+stats_patologias['Positivos (1.0)'] = formatear_columna(df_ini[cols_patologias] == 1.0)
+stats_patologias['Negativos (0.0)'] = formatear_columna(df_ini[cols_patologias] == 0.0)
+stats_patologias['Inciertos (-1.0)'] = formatear_columna(df_ini[cols_patologias] == -1.0)
+stats_patologias['No Mencionados (NaN)'] = formatear_columna(df_ini[cols_patologias].isna())
+
+# Ordenamiento por relevancia documental (mayor a menor cobertura)
+stats_patologias = stats_patologias.sort_values(by='Menciones (No nulos)', ascending=False)
+display(stats_patologias)
+
+### CELDA 17 ###
+# -------------------------------------------------------------------------
+# Distribución posicional
+# -------------------------------------------------------------------------
+display(Markdown("### Distribución de posición condicionada al eje de proyección"))
+# Filtrado explícito para evaluar el porcentaje AP/PA exclusivamente en vistas frontales
+df_frontal = df_ini[df_ini['Frontal/Lateral'] == 'Frontal']
+proy_frontal_cruzada = df_frontal['AP/PA'].value_counts(normalize=True).to_frame(name='% dentro de Frontal') * 100
+display(proy_frontal_cruzada.round(2))
+
+# -------------------------------------------------------------------------
+# Distribución geométrica estratificada
+# -------------------------------------------------------------------------
+display(Markdown("### Distribución geométrica estratificada por sexo"))
+sexo_proy_cruzada = pd.crosstab(df_ini['Sex'], df_ini['Frontal/Lateral'], normalize='index') * 100
+sexo_proy_cruzada.columns = [f"{col} (%)" for col in sexo_proy_cruzada.columns]
+display(sexo_proy_cruzada.round(2))
+
+# -------------------------------------------------------------------------
+# Análisis demográfico cruzado
+# -------------------------------------------------------------------------
+display(Markdown("### Análisis demográfico continuo (Edad por Sexo)"))
+edad_por_sexo = df_ini.groupby('Sex', observed=True)['Age'].agg(['mean', 'median', 'std', 'count']).round(2)
+edad_por_sexo.columns = ['Media (Años)', 'Mediana (Años)', 'Desviación Estándar', 'Volumen']
+display(edad_por_sexo)
+
+# -------------------------------------------------------------------------
+# Prevalencia patológica condicionada
+# -------------------------------------------------------------------------
+display(Markdown("### Prevalencia patológica condicionada (Ejemplo: Derrame Pleural)"))
+patologia_foco = 'Pleural Effusion'
+
+# Evaluación vectorial mediante máscara booleana para evitar expansión de memoria
+mascara_positivos = (df_ini[patologia_foco] == 1.0).astype(int)
+prev_por_sexo = mascara_positivos.groupby(df_ini['Sex'], observed=True).mean().to_frame(name=f'% {patologia_foco} sobre total') * 100
+display(prev_por_sexo.round(2))
+
+# -------------------------------------------------------------------------
+# Matriz de co-ocurrencia clínica
+# -------------------------------------------------------------------------
+display(Markdown("### Matriz de co-ocurrencia clínica (Absoluta y Relativa)"))
+
+# 1. Binarización aislada del espacio de etiquetas clínicas (1.0 = Positivo, resto = 0)
+df_pos = (df_ini[cols_patologias] == 1.0).astype(int)
+
+# 2. Producto escalar matricial para conteo absoluto de intersecciones
+matriz_cooc_abs = df_pos.T.dot(df_pos)
+
+# 3. Cálculo de prevalencia cruzada porcentual
+total_observaciones = len(df_ini)
+matriz_cooc_pct = (matriz_cooc_abs / total_observaciones) * 100
+
+# 4. Fusión de matrices (Absoluta y Porcentual)
+matriz_final = matriz_cooc_abs.astype(str) + " (" + matriz_cooc_pct.round(2).astype(str) + "%)"
+
+# Visualización 1: Matriz completa
+display(Markdown("#### Matriz Global (14 Patologías)"))
+display(matriz_final)
+
+# Visualización 2: Submatriz de competición
+display(Markdown("#### Submatriz de competición (Top 5 patologías objetivo)"))
+cols_top5 = ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Pleural Effusion']
+display(matriz_final.loc[cols_top5, cols_top5])
+
+### CELDA 19 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+display(Markdown("""
+El siguiente histograma permite observar la forma, asimetría y dispersión de la edad de los pacientes en el momento de la adquisición radiológica, siendo la única variable numérica continua del conjunto de datos.
+"""))
+
+# Configuración del lienzo
+fig, ax = plt.subplots(figsize=(10, 6))
+
+# Dibujar Histograma con curva de densidad (KDE)
+sns.histplot(
+    df_ini['Age'].dropna(), 
+    bins=30, 
+    kde=True, 
+    ax=ax, 
+    color='#3498db', 
+    edgecolor='white',
+    stat='percent',
+    line_kws={'linewidth': 2, 'linestyle': '--'} # Línea de densidad
+)
+
+# Cálculos estadísticos
+mean_val = df_ini['Age'].mean()
+median_val = df_ini['Age'].median()
+
+# Trazar líneas de tendencia central
+ax.axvline(mean_val, color='black', linestyle='--', linewidth=1.5, label=f'Media: {mean_val:.1f} años')
+ax.axvline(median_val, color='red', linestyle='-.', linewidth=1.5, label=f'Mediana: {median_val:.1f} años')
+
+# Formateo estético del gráfico
+ax.set_title("Distribución de la Edad en la cohorte clínica", fontsize=15, fontweight='bold', pad=15)
+ax.set_xlabel("Edad (Años)", fontsize=12)
+ax.set_ylabel("Porcentaje de la población (%)", fontsize=12)
+ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.0f}%'))
+ax.grid(alpha=0.3)
+ax.legend(frameon=True, facecolor='white', edgecolor='gray', fontsize=11)
+
+# Renderizar
+plt.tight_layout()
+plt.show()
+
+### CELDA 21 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import display, Markdown
+
+display(Markdown("### 2.5.1. Distribución geométrica de las adquisiciones"))
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+sns.set_theme(style="whitegrid")
+
+# -------------------------------------------------------------------
+# Gráfico 1: Frontal vs Lateral
+# -------------------------------------------------------------------
+sns.countplot(
+    data=df_ini,
+    x='Frontal/Lateral', 
+    hue='Frontal/Lateral', 
+    order=['Frontal', 'Lateral'], 
+    palette='Set2', 
+    ax=axes[0], 
+    legend=False,
+    dodge=False
+)
+
+axes[0].set_title("Proporción de vistas: Frontal vs Lateral", fontsize=13, fontweight='bold')
+axes[0].set_ylabel("Número de radiografías")
+axes[0].set_xlabel("Tipo de proyección general")
+
+# Añadir etiquetas de datos absolutos y porcentuales (Gráfico 1)
+total_grafico1 = len(df_ini) # Total de observaciones en el dataset
+for container in axes[0].containers:
+    # Generamos el texto combinando el valor absoluto (v) y calculando su % sobre el total
+    etiquetas_g1 = [f"{int(v)} ({v/total_grafico1*100:.1f}%)" if v > 0 else "" for v in container.datavalues]
+    axes[0].bar_label(container, labels=etiquetas_g1, padding=3, fontsize=11)
+
+# -------------------------------------------------------------------
+# Gráfico 2: AP vs PA (Solo Frontales)
+# -------------------------------------------------------------------
+# Filtramos explícitamente los errores LL/RL para el gráfico
+df_frontal_clean = df_ini[df_ini['AP/PA'].isin(['AP', 'PA'])]
+
+sns.countplot(
+    data=df_frontal_clean, 
+    x='AP/PA', 
+    hue='AP/PA', 
+    order=['AP', 'PA'], 
+    palette='viridis', 
+    ax=axes[1], 
+    legend=False, 
+    dodge=False
+)
+
+axes[1].set_title("Sesgo de adquisición en proyecciones frontales", fontsize=13, fontweight='bold')
+axes[1].set_ylabel("Número de radiografías")
+axes[1].set_xlabel("Dirección del haz (AP vs PA)")
+
+# Añadir etiquetas de datos absolutos y porcentuales (Gráfico 2)
+total_grafico2 = len(df_frontal_clean) # Total de proyecciones exclusivamente frontales
+for container in axes[1].containers:
+    # Generamos el texto combinando el valor absoluto (v) y calculando su % sobre el total
+    etiquetas_g2 = [f"{int(v)} ({v/total_grafico2*100:.1f}%)" if v > 0 else "" for v in container.datavalues]
+    axes[1].bar_label(container, labels=etiquetas_g2, padding=3, fontsize=11)
+
+# -------------------------------------------------------------------
+# Ajustes estéticos finales
+# -------------------------------------------------------------------
+# Aumentamos el límite Y superior un 15% (1.15) para que quepan bien las nuevas etiquetas más largas
+axes[0].set_ylim(0, axes[0].get_ylim()[1] * 1.15)
+axes[1].set_ylim(0, axes[1].get_ylim()[1] * 1.15)
+
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación visual:** Se aprecia un desbalance masivo hacia las proyecciones Anteroposteriores (AP), típicas de pacientes hospitalizados en estado crítico o con movilidad reducida."))
+
+### CELDA 23 ###
+import matplotlib.pyplot as plt
+from IPython.display import display, Markdown
+
+# Extraer solo los positivos (1.0) para las 14 patologías
+positivos_counts = (df_ini[cols_patologias] == 1.0).sum().sort_values(ascending=True)
+
+# Obtener el total de observaciones del dataset para calcular los porcentajes
+total_obs = len(df_ini)
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+# Crear gráfico de barras horizontales
+positivos_counts.plot(kind='barh', color='#e74c3c', ax=ax, edgecolor='black', linewidth=0.8)
+
+ax.set_title("Frecuencia absoluta de diagnósticos positivos (1.0) por patología", fontsize=14, fontweight='bold', pad=15)
+ax.set_xlabel("Número total de casos confirmados", fontsize=12)
+ax.set_ylabel("Clase (Patología)", fontsize=12)
+ax.grid(axis='x', alpha=0.3, linestyle='--')
+
+# Añadir el número exacto y el porcentaje al final de cada barra
+for i, v in enumerate(positivos_counts):
+    # Calcular porcentaje
+    porcentaje = (v / total_obs) * 100
+    # Formatear el texto (ejemplo: "113,135 (50.6%)")
+    texto_etiqueta = f"{int(v):,} ({porcentaje:.1f}%)"
+    
+    # Colocar el texto un poco a la derecha del final de la barra
+    ax.text(v + 1500, i, texto_etiqueta, va='center', fontsize=10)
+
+# Expandir límite x para que quepa el texto (subimos de 1.15 a 1.20 porque el texto es más largo)
+ax.set_xlim(0, positivos_counts.max() * 1.20)
+
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación visual:** El gráfico evidencia un desbalance severo (Long-tail). Clases como *Support Devices* o *Pleural Effusion* dominan la muestra, mientras que condiciones críticas como *Fracture* o *Pneumonia* presentan un grave déficit representacional."))
+
+### CELDA 25 ###
+# Extraer solo los inciertos (-1.0)
+inciertos_counts = (df_ini[cols_patologias] == -1.0).sum().sort_values(ascending=True)
+total_obs = len(df_ini)
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+# Color naranja/amarillo (#f39c12) para representar advertencia/incertidumbre
+inciertos_counts.plot(kind='barh', color='#f39c12', ax=ax, edgecolor='black', linewidth=0.8)
+
+ax.set_title("Frecuencia absoluta de diagnósticos inciertos (-1.0) por patología", fontsize=14, fontweight='bold', pad=15)
+ax.set_xlabel("Número total de casos inciertos", fontsize=12)
+ax.set_ylabel("Clase (Patología)", fontsize=12)
+ax.grid(axis='x', alpha=0.3, linestyle='--')
+
+# Margen dinámico para el texto (2% del valor máximo)
+margen_texto = inciertos_counts.max() * 0.02
+
+# Añadir etiquetas de datos
+for i, v in enumerate(inciertos_counts):
+    porcentaje = (v / total_obs) * 100
+    texto_etiqueta = f"{int(v):,} ({porcentaje:.1f}%)" if v > 0 else "0 (0.0%)"
+    ax.text(v + margen_texto, i, texto_etiqueta, va='center', fontsize=10)
+
+ax.set_xlim(0, inciertos_counts.max() * 1.20)
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación visual:** Destaca la altísima incertidumbre en patologías pulmonares difusas como *Atelectasis* (15.4%) y *Consolidation* (11.9%). Estas condiciones son radiológicamente difíciles de distinguir sin el contexto clínico completo, lo que se refleja en la duda expresada por los radiólogos en los informes."))
+
+### CELDA 27 ###
+# Extraer solo los valores nulos (NaN)
+nan_counts = df_ini[cols_patologias].isna().sum().sort_values(ascending=True)
+
+fig, ax = plt.subplots(figsize=(10, 8))
+
+# Color gris (#95a5a6) para representar ausencia de mención
+nan_counts.plot(kind='barh', color='#95a5a6', ax=ax, edgecolor='black', linewidth=0.8)
+
+ax.set_title("Frecuencia absoluta de patologías no mencionadas (NaN)", fontsize=14, fontweight='bold', pad=15)
+ax.set_xlabel("Número total de casos no mencionados", fontsize=12)
+ax.set_ylabel("Clase (Patología)", fontsize=12)
+ax.grid(axis='x', alpha=0.3, linestyle='--')
+
+# Margen dinámico para el texto (2% del valor máximo)
+margen_texto = nan_counts.max() * 0.02
+
+# Añadir etiquetas de datos
+for i, v in enumerate(nan_counts):
+    porcentaje = (v / total_obs) * 100
+    texto_etiqueta = f"{int(v):,} ({porcentaje:.1f}%)"
+    ax.text(v + margen_texto, i, texto_etiqueta, va='center', fontsize=10)
+
+ax.set_xlim(0, nan_counts.max() * 1.20)
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación visual:** La gráfica corrobora que la omisión es la norma en el dictado de informes radiológicos. Condiciones como *Fracture*, *Lung Lesion* o *Pleural Other* no se mencionan en más del 94% de los casos. Esto justifica la necesidad de utilizar estrategias como *U-Zeroes* (asumir que la no mención equivale a la ausencia de la patología) durante el entrenamiento del modelo."))
+
+### CELDA 29 ###
+import matplotlib.pyplot as plt
+import pandas as pd
+from IPython.display import display, Markdown
+
+# 1. Crear un DataFrame combinando los conteos de ambas clases
+df_stack = pd.DataFrame({
+    'Positivos (1.0)': (df_ini[cols_patologias] == 1.0).sum(),
+    'Inciertos (-1.0)': (df_ini[cols_patologias] == -1.0).sum()
+})
+
+# 2. Calcular el total (Positivos + Inciertos) para ordenar el gráfico lógicamente
+df_stack['Total_Activos'] = df_stack['Positivos (1.0)'] + df_stack['Inciertos (-1.0)']
+df_stack = df_stack.sort_values(by='Total_Activos', ascending=True)
+
+# 3. Configuración del lienzo
+fig, ax = plt.subplots(figsize=(14, 10))
+total_obs = len(df_ini) # Total del dataset para calcular los porcentajes
+
+# 4. Crear el gráfico de barras horizontales apiladas
+df_stack[['Positivos (1.0)', 'Inciertos (-1.0)']].plot(
+    kind='barh', 
+    stacked=True, 
+    color=['#e74c3c', '#f39c12'], 
+    ax=ax, 
+    edgecolor='black', 
+    linewidth=0.6
+)
+
+# 5. Añadir textos personalizados con valores absolutos y porcentajes
+for i, (index, row) in enumerate(df_stack.iterrows()):
+    val_pos = row['Positivos (1.0)']
+    val_inc = row['Inciertos (-1.0)']
+    total_barra = val_pos + val_inc
+    
+    # Texto para POSITIVOS (A la derecha de la marca del 0)
+    if val_pos > 0:
+        pct_pos = (val_pos / total_obs) * 100
+        texto_pos = f"{int(val_pos):,} ({pct_pos:.1f}%)"
+        ax.text(1500, i, texto_pos, va='center', ha='left', color='black', fontsize=10, fontweight='bold')
+        
+    # Texto para INCIERTOS (Regla anti-solapamiento)
+    if val_inc > 0:
+        pct_inc = (val_inc / total_obs) * 100
+        texto_inc = f" {int(val_inc):,} ({pct_inc:.1f}%)"
+        
+        # --- SOLUCIÓN: Condición matemática de desplazamiento mínimo ---
+        # Si la barra termina antes de 20000, el texto se pinta en la marca de 20000.
+        # Si la barra es más larga, se pinta a +1500 del final de la barra.
+        posicion_x_inciertos = max(total_barra + 1500, 20000)
+        
+        ax.text(posicion_x_inciertos, i, texto_inc, va='center', ha='left', color='#d35400', fontsize=10, fontweight='bold')
+
+# 6. Formateo y estética
+ax.set_title("Diagnósticos Positivos vs. Inciertos por Patología", fontsize=16, fontweight='bold', pad=15)
+ax.set_xlabel("Número total de casos (Positivos + Inciertos)", fontsize=13)
+ax.set_ylabel("Clase (Patología)", fontsize=13)
+
+# Expandir el límite X un 20% para asegurar que el texto de los inciertos no se corte por la derecha
+ax.set_xlim(0, df_stack['Total_Activos'].max() * 1.20)
+
+# Formatear el eje X con separadores de miles
+ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f'{int(x):,}'))
+ax.grid(axis='x', alpha=0.3, linestyle='--')
+
+# Configurar leyenda
+ax.legend(title="Etiqueta Diagnóstica", loc='lower right', frameon=True, facecolor='white', edgecolor='gray', fontsize=12)
+
+plt.tight_layout()
+plt.show()
+
+# 7. Interpretación de los hallazgos
+display(Markdown("> **Interpretación visual:** Se han separado espacialmente las métricas para evitar solapamientos. Los números a la izquierda (dentro de la barra) representan los diagnósticos confirmados y su prevalencia global, mientras que los números a la derecha (fuera de la barra) cuantifican la incertidumbre diagnóstica. En patologías como *Atelectasis* el componente de incertidumbre (naranja) iguala o incluso supera al de confirmación (rojo)."))
+
+### CELDA 31 ###
+# Seleccionar el Top-5 de patologías de la competición oficial
+cols_top5 = ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Pleural Effusion']
+
+# Calcular la matriz de porcentaje sobre el top 5
+df_pos_top5 = (df_ini[cols_top5] == 1.0).astype(int)
+matriz_cooc_abs_top5 = df_pos_top5.T.dot(df_pos_top5)
+matriz_cooc_pct_top5 = (matriz_cooc_abs_top5 / len(df_ini)) * 100
+
+# Plotting
+fig, ax = plt.subplots(figsize=(8, 6))
+
+sns.heatmap(
+    matriz_cooc_pct_top5, 
+    annot=True,            # Mostrar el número dentro de la celda
+    fmt=".2f",             # Dos decimales
+    cmap="Reds",           # Escala de colores
+    cbar_kws={'label': '% de coexistencia sobre el total'},
+    linewidths=1,
+    linecolor='white',
+    ax=ax
+)
+
+ax.set_title("Co-ocurrencia Clínica (Top 5 Patologías CheXpert)", fontsize=14, fontweight='bold', pad=15)
+plt.xticks(rotation=45, ha='right')
+plt.yticks(rotation=0)
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación visual:** La intensidad del color revela la alta dependencia multietiqueta del dataset. Destaca la coexistencia frecuente (celdas oscuras fuera de la diagonal) entre *Edema* y *Derrame Pleural (Pleural Effusion)*, lo que exigirá una función de pérdida independiente por clase (BCE) en lugar de funciones mutuamente excluyentes (Softmax)."))
+
+### CELDA 33 ###
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import display, Markdown
+
+# 1. Filtrado dinámico: Encontrar patologías con más del 10% de casos positivos
+prevalencia_positivos = (df_ini[cols_patologias] == 1.0).sum() / len(df_ini) * 100
+cols_mayor_10 = prevalencia_positivos[prevalencia_positivos > 10.0].index.tolist()
+
+display(Markdown(f"**Patologías analizadas (Prevalencia > 10%):** {', '.join(cols_mayor_10)}"))
+
+# 2. Calcular la matriz de co-ocurrencia solo para estas columnas
+df_pos_filtrado = (df_ini[cols_mayor_10] == 1.0).astype(int)
+matriz_cooc_abs_filtrada = df_pos_filtrado.T.dot(df_pos_filtrado)
+matriz_cooc_pct_filtrada = (matriz_cooc_abs_filtrada / len(df_ini)) * 100
+
+# 3. Renderizado del Mapa de Calor (Cambiado a paleta roja)
+fig, ax = plt.subplots(figsize=(10, 8))
+
+sns.heatmap(
+    matriz_cooc_pct_filtrada, 
+    annot=True,            
+    fmt=".2f",             
+    cmap="Reds",          
+    cbar_kws={'label': '% de coexistencia sobre el total del dataset'},
+    linewidths=1,
+    linecolor='white',
+    ax=ax
+)
+
+ax.set_title("Co-ocurrencia Clínica (Patologías con prevalencia > 10%)", fontsize=15, fontweight='bold', pad=15)
+
+# Rotar las etiquetas para legibilidad
+ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', fontsize=11)
+ax.set_yticklabels(ax.get_yticklabels(), rotation=0, fontsize=11)
+
+plt.tight_layout()
+plt.show()
+
+# 4. Interpretación
+display(Markdown("> **Interpretación visual:** Al filtrar por significancia estadística (>10%), el gráfico revela la fortísima correlación entre el tratamiento hospitalario y la sintomatología grave. La intensidad de los rojos destaca enormemente la celda que cruza *Lung Opacity* con *Support Devices* (26.54%), indicando que más de un cuarto de todos los pacientes del dataset tienen opacidades pulmonares y, simultáneamente, portan dispositivos médicos. Asimismo, la triada *Edema - Lung Opacity - Pleural Effusion* presenta una altísima dependencia multietiqueta."))
+
+### CELDA 35 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import display, Markdown
+
+# 1. Extracción del ID del paciente y del estudio desde la ruta del archivo (Path)
+# Utilizamos expresiones regulares (regex) para buscar los patrones 'patientXXXXX' y 'studyX'
+df_ini['Patient'] = df_ini['Path'].str.extract(r'(patient\d+)')
+df_ini['Study'] = df_ini['Path'].str.extract(r'(study\d+)')
+
+# 2. Cálculos y estadísticas descriptivas
+total_imagenes = len(df_ini)
+total_pacientes = df_ini['Patient'].nunique()
+ratio_imgs = total_imagenes / total_pacientes
+
+imagenes_por_paciente = df_ini.groupby('Patient').size()
+estudios_por_paciente = df_ini.groupby('Patient')['Study'].nunique()
+
+display(Markdown(f"""
+**Resumen Estructural de la Cohorte:**
+* **Total de radiografías:** {total_imagenes:,}
+* **Total de pacientes únicos:** {total_pacientes:,}
+* **Media de radiografías por paciente:** {ratio_imgs:.2f}
+* **Máximo de radiografías para un solo paciente:** {imagenes_por_paciente.max()}
+* **Máximo de estudios clínicos para un solo paciente:** {estudios_por_paciente.max()}
+"""))
+
+# 3. Renderizado de la distribución
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+sns.set_theme(style="whitegrid")
+
+# Histograma 1: Imágenes por paciente
+sns.histplot(imagenes_por_paciente, bins=range(1, 15), discrete=True, color='#3498db', ax=axes[0], edgecolor='black')
+axes[0].set_title("Distribución de radiografías por paciente", fontsize=13, fontweight='bold')
+axes[0].set_xlabel("Número de radiografías (Corte en 15 para visualización)")
+axes[0].set_ylabel("Cantidad de pacientes")
+axes[0].set_xlim(0, 15)
+axes[0].xaxis.set_major_locator(plt.MultipleLocator(1))
+
+# Histograma 2: Estudios por paciente
+sns.histplot(estudios_por_paciente, bins=range(1, 10), discrete=True, color='#2ecc71', ax=axes[1], edgecolor='black')
+axes[1].set_title("Distribución de estudios (visitas) por paciente", fontsize=13, fontweight='bold')
+axes[1].set_xlabel("Número de estudios independientes (Corte en 10)")
+axes[1].set_ylabel("Cantidad de pacientes")
+axes[1].set_xlim(0, 10)
+axes[1].xaxis.set_major_locator(plt.MultipleLocator(1))
+
+plt.tight_layout()
+plt.show()
+
+# 4. Interpretación metodológica crítica
+display(Markdown("> **Interpretación visual y Alerta de *Data Leakage*:** Los gráficos y métricas demuestran que el dataset no tiene una relación 1:1 entre paciente e imagen. Existen pacientes crónicos con múltiples visitas al hospital (estudios) y decenas de radiografías acumuladas. Esto **prohíbe terminantemente realizar un *split* (división train/val/test) aleatorio simple** sobre las filas del CSV. Si la radiografía A de un paciente va al conjunto de entrenamiento y la radiografía B del mismo paciente va al conjunto de validación, la red neuronal memorizará la anatomía de esa persona en lugar de aprender a generalizar la patología (fuga de datos). La división del dataset deberá realizarse agrupando estrictamente por la nueva columna `Patient` generada."))
+
+### CELDA 37 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import display, Markdown
+
+# 1. Agrupar a nivel de paciente, extrayendo el conteo de imágenes/estudios y su género
+# Utilizamos 'first' asumiendo que el sexo del paciente no cambia entre sus distintas visitas
+df_pacientes = df_ini.groupby('Patient').agg(
+    Num_Radiografias=('Path', 'count'),
+    Num_Estudios=('Study', 'nunique'),
+    Sex=('Sex', 'first')
+).reset_index()
+
+# Limpiar posibles valores nulos en la columna de sexo (si los hay)
+df_pacientes = df_pacientes.dropna(subset=['Sex'])
+
+# 2. Generar el resumen de texto dinámico por cada sexo
+texto_resumen = "**Resumen Estructural desglosado por Sexo:**\n\n"
+
+# Iteramos sobre los sexos disponibles en el dataset
+for sexo in df_pacientes['Sex'].unique():
+    df_s = df_pacientes[df_pacientes['Sex'] == sexo]
+
+    total_pacientes_s = len(df_s)
+    total_radiografias_s = df_s['Num_Radiografias'].sum()
+    media_radiografias_s = total_radiografias_s / total_pacientes_s
+    max_radiografias_s = df_s['Num_Radiografias'].max()
+    max_estudios_s = df_s['Num_Estudios'].max()
+
+    texto_resumen += f"**Pacientes ({sexo}):**\n"
+    texto_resumen += f"* Total de radiografías: {total_radiografias_s:,}\n"
+    texto_resumen += f"* Total de pacientes únicos: {total_pacientes_s:,}\n"
+    texto_resumen += f"* Media de radiografías por paciente: {media_radiografias_s:.2f}\n"
+    texto_resumen += f"* Máximo de radiografías para un solo paciente: {max_radiografias_s}\n"
+    texto_resumen += f"* Máximo de estudios clínicos para un solo paciente: {max_estudios_s}\n\n"
+
+display(Markdown(texto_resumen))
+
+# 3. Configuración del lienzo para los gráficos
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+sns.set_theme(style="whitegrid")
+
+radio_pa = 15  # Corte máximo para el eje X del histograma de radiografías
+estudios_pa = 10  # Corte máximo para el eje X del histograma de estudios
+
+# Paleta de colores consistente
+colores_sexo = {'Male': '#3498db', 'Female': '#e74c3c', 'Unknown': '#95a5a6'}
+
+# 4. Histograma 1: Imágenes por paciente agrupado por Sexo
+sns.histplot(
+    data=df_pacientes,
+    x='Num_Radiografias',
+    hue='Sex',
+    multiple='dodge',  # Barras agrupadas lado a lado
+    discrete=True,
+    palette=colores_sexo,
+    ax=axes[0],
+    edgecolor='black',
+    shrink=0.8
+)
+
+axes[0].set_title("Radiografías por paciente (Hombres vs Mujeres)", fontsize=13, fontweight='bold')
+axes[0].set_xlabel(f"Número de radiografías (Corte en {radio_pa})")
+axes[0].set_ylabel("Cantidad de pacientes")
+axes[0].set_xlim(0, radio_pa)
+# axes[0].set_ylim(0, 100)
+axes[0].xaxis.set_major_locator(plt.MultipleLocator(1))
+
+# 5. Histograma 2: Estudios por paciente agrupado por Sexo
+sns.histplot(
+    data=df_pacientes,
+    x='Num_Estudios',
+    hue='Sex',
+    multiple='dodge',
+    discrete=True,
+    palette=colores_sexo,
+    ax=axes[1],
+    edgecolor='black',
+    shrink=0.8
+)
+
+axes[1].set_title("Estudios (visitas) por paciente (Hombres vs Mujeres)", fontsize=13, fontweight='bold')
+axes[1].set_xlabel(f"Número de estudios independientes (Corte en {estudios_pa})")
+axes[1].set_ylabel("Cantidad de pacientes")
+axes[1].set_xlim(0, estudios_pa)
+axes[1].xaxis.set_major_locator(plt.MultipleLocator(1))
+
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación visual:** Al segregar por sexo, podemos comparar de forma cuantitativa y visual si existe un sesgo demográfico en la cronicidad hospitalaria (si un grupo presenta sistemáticamente mayor volumen de readmisiones clínicas o seguimiento radiológico)."))
+
+### CELDA 40 ###
+import os
+import shutil
+import re
+import pandas as pd
+from IPython.display import display, Markdown
+
+# =====================================================================
+# 1. PANEL DE BÚSQUEDA (Rellene lo que quiera encontrar)
+# =====================================================================
+directorio_raiz = r"C:\CheXpertDataset\chexpertchestxrays-u20210408"
+
+# 1. Patologías que DEBEN estar presentes (1.0). Deje la lista [] si le da igual.
+patologias_requeridas = ['Support Devices']
+
+# 2. Vista requerida ('Frontal', 'Lateral' o deje None si le da igual)
+vista_requerida = 'Frontal'
+
+# 3. Posición requerida ('AP', 'PA', 'LL' o deje None si le da igual)
+posicion_requerida = 'AP'
+
+# 4. Sexo del paciente ('Male', 'Female' o deje None si le da igual)
+sexo_requerido = None
+
+# Configuración de salida
+numero_imagenes_a_extraer = 50
+carpeta_destino = r"muestras_busqueda"
+
+posibles_batches = [
+    "CheXpert-v1.0 batch 2 (train 1)",
+    "CheXpert-v1.0 batch 3 (train 2)",
+    "CheXpert-v1.0 batch 4 (train 3)"
+]
+
+os.makedirs(carpeta_destino, exist_ok=True)
+
+# =====================================================================
+# 2. MOTOR DE BÚSQUEDA
+# =====================================================================
+df_busqueda = df_ini.copy()
+
+# A. Filtrar por Patologías
+for patologia in patologias_requeridas:
+    df_busqueda = df_busqueda[df_busqueda[patologia] == 1.0]
+
+# B. Filtrar por Vista
+if vista_requerida is not None:
+    df_busqueda = df_busqueda[df_busqueda['Frontal/Lateral'] == vista_requerida]
+
+# C. Filtrar por Posición
+if posicion_requerida is not None:
+    df_busqueda = df_busqueda[df_busqueda['AP/PA'] == posicion_requerida]
+
+# D. Filtrar por Sexo
+if sexo_requerido is not None:
+    col_sexo = 'Sex' if 'Sex' in df_busqueda.columns else 'GENDER'
+    df_busqueda = df_busqueda[df_busqueda[col_sexo] == sexo_requerido]
+
+# =====================================================================
+# 3. EXTRACCIÓN Y COPIA
+# =====================================================================
+total_disponibles = len(df_busqueda)
+n_extraer = min(numero_imagenes_a_extraer, total_disponibles)
+
+imagenes_copiadas = 0
+imagenes_no_encontradas = 0
+
+if n_extraer > 0:
+    # Seleccionamos al azar de las que cumplen TODAS las condiciones
+    df_muestra = df_busqueda.sample(n=n_extraer, random_state=42)
+
+    for index, row in df_muestra.iterrows():
+        ruta_csv = row['Path']
+        match = re.search(r'(patient\d+/study\d+/.*\.jpg)', ruta_csv)
+        
+        if match:
+            parte_relativa = match.group(1).replace('/', os.sep)
+            archivo_encontrado = False
+            
+            for batch in posibles_batches:
+                ruta_origen = os.path.join(directorio_raiz, batch, parte_relativa)
+                if os.path.exists(ruta_origen):
+                    # Guardamos la imagen con un nombre descriptivo
+                    nombre_archivo = f"{row['Patient']}_{parte_relativa.split(os.sep)[-1]}"
+                    ruta_destino = os.path.join(carpeta_destino, nombre_archivo)
+                    
+                    shutil.copy2(ruta_origen, ruta_destino)
+                    imagenes_copiadas += 1
+                    archivo_encontrado = True
+                    break 
+            
+            if not archivo_encontrado:
+                imagenes_no_encontradas += 1
+        else:
+            imagenes_no_encontradas += 1
+
+# =====================================================================
+# 4. REPORTE FINAL
+# =====================================================================
+display(Markdown(f"""
+**🔍 Resultados de la Búsqueda:**
+* **Criterios:** Patologías: `{patologias_requeridas}`, Vista: `{vista_requerida}`, Posición: `{posicion_requerida}`, Sexo: `{sexo_requerido}`
+* **Imágenes que cumplen sus criterios en el dataset:** {total_disponibles:,}
+* **Copiadas con éxito a `{carpeta_destino}`:** {imagenes_copiadas}
+* **No encontradas en el disco duro:** {imagenes_no_encontradas}
+"""))
+
+### CELDA 42 ###
+import pandas as pd
+from IPython.display import display, Markdown
+
+# 1. Definir las etiquetas que queremos evaluar para exclusión
+# Puede modificar esta lista con cualquier patología que desee analizar
+# etiquetas_a_excluir = [
+#     'No Finding', 
+#     'Enlarged Cardiomediastinum', 
+#     'Cardiomegaly', 
+#     'Lung Opacity', 
+#     'Lung Lesion', 
+#     'Edema', 
+#     'Consolidation', 
+#     'Pneumonia', 
+#     'Atelectasis', 
+#     'Pneumothorax', 
+#     'Pleural Effusion', 
+#     'Pleural Other', 
+#     'Fracture', 
+#     'Support Devices'
+# ]
+
+etiquetas_a_excluir = [
+    'Pleural Other', 
+]
+# 2. Calcular el tamaño original
+total_original = len(df_ini)
+
+# 3. Identificar las filas que tienen un positivo (1.0) en ALGUNA de las etiquetas a excluir
+# Creamos una máscara booleana que será True si alguna de las columnas especificadas es igual a 1.0
+mascara_exclusion = (df_ini[etiquetas_a_excluir] == 1.0).any(axis=1)
+
+# 4. Calcular los conjuntos resultantes
+df_excluido = df_ini[mascara_exclusion]
+df_restante = df_ini[~mascara_exclusion]
+
+total_excluido = len(df_excluido)
+total_restante = len(df_restante)
+
+porcentaje_perdida = (total_excluido / total_original) * 100
+porcentaje_retencion = (total_restante / total_original) * 100
+
+# 5. Mostrar los resultados
+display(Markdown(f"""
+**Análisis de reducción del Dataset:**
+Al plantear la eliminación de todas las radiografías que sean positivas en: `{', '.join(etiquetas_a_excluir)}`
+
+* **Tamaño original del dataset:** {total_original:,} imágenes.
+* **Imágenes que serían eliminadas:** {total_excluido:,} ({porcentaje_perdida:.2f}% del total).
+* **Imágenes que quedarían útiles:** {total_restante:,} ({porcentaje_retencion:.2f}% del total).
+"""))
+
+### CELDA 44 ###
+import pandas as pd
+from IPython.display import display, Markdown
+
+# 1. Definir las 14 columnas de patologías
+cols_patologias = [
+    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 
+    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+]
+
+# 2. Calcular el tamaño original del dataset
+total_original = len(df_ini)
+
+# 3. Identificar las filas que tienen un -1.0 en ALGUNA de las patologías
+# Utilizamos any(axis=1) para buscar por filas
+mascara_incertidumbre = (df_ini[cols_patologias] == -1.0).any(axis=1)
+
+# 4. Calcular los conjuntos resultantes
+df_sin_incertidumbre = df_ini[~mascara_incertidumbre] # El símbolo ~ invierte la máscara (los que NO tienen -1.0)
+df_con_incertidumbre = df_ini[mascara_incertidumbre]
+
+total_excluido = len(df_con_incertidumbre)
+total_restante = len(df_sin_incertidumbre)
+
+porcentaje_perdida = (total_excluido / total_original) * 100
+porcentaje_retencion = (total_restante / total_original) * 100
+
+# 5. Mostrar los resultados de la simulación
+display(Markdown(f"""
+**Análisis de reducción por Incertidumbre (Política U-Ignore):**
+Al plantear la eliminación de todas las radiografías que presenten al menos un diagnóstico incierto (`-1.0`) en cualquiera de las 14 etiquetas:
+
+* **Tamaño original del dataset:** {total_original:,} imágenes.
+* **Imágenes que serían eliminadas:** {total_excluido:,} ({porcentaje_perdida:.2f}% del total).
+* **Imágenes que quedarían útiles:** {total_restante:,} ({porcentaje_retencion:.2f}% del total).
+"""))
+
+### CELDA 46 ###
+from Funciones.filtrar_chexpert_dataset import filtrar_chexpert_dataset
+
+# =====================================================================
+# 1. PANEL DE CONFIGURACIÓN (Modifique estas listas según su criterio)
+# =====================================================================
+
+excluir_positivos_en = ['Pleural Other']
+excluir_vistas = ['Lateral']
+excluir_posiciones = ['PA']
+excluir_valores_globales = [-1.0]
+eliminar_inconsistencias_nofinding = True
+
+# Filtros adicionales opcionales
+filtrar_edad_min = None
+filtrar_edad_max = None
+filtrar_sexo = None  # ej. ["Male", "Female"]
+
+# =====================================================================
+# 2. FILTRADO UTILIZANDO LA FUNCIÓN
+# =====================================================================
+
+df_filtrado, reporte = filtrar_chexpert_dataset(
+    df_ini=df_ini,
+    excluir_positivos_en=excluir_positivos_en,
+    excluir_vistas=excluir_vistas,
+    excluir_posiciones=excluir_posiciones,
+    excluir_valores_globales=excluir_valores_globales,
+    excluir_incertidumbre=True,  # eliminar filas con -1.0
+    eliminar_inconsistencias_nofinding=eliminar_inconsistencias_nofinding,
+    filtrar_edad_min=filtrar_edad_min,
+    filtrar_edad_max=filtrar_edad_max,
+    filtrar_sexo=filtrar_sexo
+)
+
+# =====================================================================
+# 3. REPORTE DE RESULTADOS
+# =====================================================================
+
+display(Markdown(f"""
+**Reporte del Pipeline de Exclusión:**  
+
+* **Dataset Inicial:** {reporte['total_original']:,} imágenes.  
+* **Dataset Final Útil:** **{reporte['total_final']:,}** imágenes ({reporte['porcentaje_retencion']:.2f}% retenido).  
+* **Imágenes Eliminadas:** {reporte['total_perdido']:,} ({reporte['porcentaje_perdido']:.2f}% perdido).  
+
+**Desglose de la eliminación en cascada:**  
+1. Eliminadas por ser positivas en `{excluir_positivos_en}`: **{reporte['perdida_por_positivos']:,}**  
+2. Eliminadas por ser vista `{excluir_vistas}`: **{reporte['perdida_por_vista']:,}**  
+3. Eliminadas por ser posición `{excluir_posiciones}`: **{reporte['perdida_por_posicion']:,}**  
+4. Eliminadas por contener los valores `{excluir_valores_globales}` o incertidumbre: **{reporte['perdida_por_valores']:,}**  
+5. Eliminadas por inconsistencia (`No Finding=1.0` y al menos otra patología positiva): **{reporte['perdida_por_inconsistencia']:,}**  
+6. Eliminadas por edad fuera de rango: **{reporte['perdida_por_edad']:,}**  
+7. Eliminadas por sexo excluido: **{reporte['perdida_por_sexo']:,}**
+"""))
+
+### CELDA 48 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from IPython.display import display, Markdown
+
+cols_patologias = [
+    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 
+    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+]
+
+# Calculamos cuántos '1.0' puros quedan en cada patología
+conteo_positivos = (df_filtrado[cols_patologias] == 1.0).sum().sort_values(ascending=False)
+porcentajes = (conteo_positivos / len(df_filtrado)) * 100
+
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# --- CÓDIGO CORREGIDO PARA SEABORN ---
+sns.barplot(
+    x=conteo_positivos.values, 
+    y=conteo_positivos.index, 
+    hue=conteo_positivos.index,   # Asignamos hue al eje Y para silenciar el aviso
+    palette='viridis', 
+    legend=False,                 # Ocultamos la leyenda automática
+    ax=ax, 
+    edgecolor='black'
+)
+# -------------------------------------
+
+# Añadir etiquetas de datos
+for i, (valor, pct) in enumerate(zip(conteo_positivos.values, porcentajes.values)):
+    ax.text(valor + 500, i, f"{valor:,} ({pct:.1f}%)", va='center', fontsize=10)
+
+ax.set_title(f"Frecuencia de Patologías Confirmadas (N={len(df_filtrado):,})", fontsize=14, fontweight='bold')
+ax.set_xlabel("Número de radiografías positivas")
+ax.set_ylabel("Patología")
+plt.tight_layout()
+plt.show()
+
+### CELDA 50 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from IPython.display import display, Markdown
+
+# Nos quedamos solo con las filas que tienen al menos un 1.0 y convertimos todo a binario estricto (1 o 0)
+df_binario = (df_filtrado[cols_patologias] == 1.0).astype(int)
+
+# Calculamos la matriz de co-ocurrencia (producto punto)
+matriz_coocurrencia = df_binario.T.dot(df_binario)
+
+# Normalizamos por el total de imágenes en el dataset filtrado
+matriz_coocurrencia_pct = (matriz_coocurrencia / len(df_filtrado)) * 100
+
+# Filtramos patologías con baja prevalencia para limpiar el gráfico (ej. > 5%)
+patologias_frecuentes = porcentajes[porcentajes > 5.0].index
+
+# 1. SOLUCIÓN: Añadimos .copy() para crear un DataFrame de escritura
+matriz_filtrada = matriz_coocurrencia_pct.loc[patologias_frecuentes, patologias_frecuentes].copy()
+
+# 2. SOLUCIÓN: Vaciamos la diagonal de forma segura y nativa en Pandas
+for patologia in matriz_filtrada.columns:
+    matriz_filtrada.loc[patologia, patologia] = np.nan
+
+# Dibujamos el mapa de calor
+fig, ax = plt.subplots(figsize=(10, 8))
+sns.heatmap(
+    matriz_filtrada, 
+    annot=True, 
+    fmt=".1f", 
+    cmap="Reds", 
+    cbar_kws={'label': '% de co-ocurrencia'},
+    linewidths=0.5,
+    ax=ax
+)
+
+ax.set_title("Mapa de Calor: Co-ocurrencia de Patologías", fontsize=14, fontweight='bold', pad=15)
+ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right', fontsize=10)
+plt.tight_layout()
+plt.show()
+
+### CELDA 52 ###
+# Agrupamos los datos restantes por paciente
+df_pacientes_filt = df_filtrado.groupby('Patient').agg(
+    Num_Radiografias=('Path', 'count'),
+    Num_Estudios=('Study', 'nunique'),
+    Sex=('Sex', 'first')
+).reset_index()
+
+df_pacientes_filt = df_pacientes_filt.dropna(subset=['Sex'])
+
+# Resumen numérico
+texto_resumen = "**Resumen Estructural del Dataset Filtrado:**\n\n"
+for sexo in df_pacientes_filt['Sex'].unique():
+    df_s = df_pacientes_filt[df_pacientes_filt['Sex'] == sexo]
+    texto_resumen += f"**Pacientes ({sexo}):**\n"
+    texto_resumen += f"* Total de radiografías: {df_s['Num_Radiografias'].sum():,}\n"
+    texto_resumen += f"* Total de pacientes únicos: {len(df_s):,}\n"
+    texto_resumen += f"* Media de radiografías por paciente: {df_s['Num_Radiografias'].mean():.2f}\n\n"
+
+display(Markdown(texto_resumen))
+
+# Visualización
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+sns.set_theme(style="whitegrid")
+colores_sexo = {'Male': '#3498db', 'Female': '#e74c3c', 'Unknown': '#95a5a6'}
+
+sns.histplot(data=df_pacientes_filt, x='Num_Radiografias', hue='Sex', multiple='dodge', discrete=True, palette=colores_sexo, ax=axes[0], edgecolor='black', shrink=0.8)
+axes[0].set_title("Radiografías por paciente (Filtrado)", fontsize=13, fontweight='bold')
+axes[0].set_xlim(0, 10)
+
+sns.histplot(data=df_pacientes_filt, x='Num_Estudios', hue='Sex', multiple='dodge', discrete=True, palette=colores_sexo, ax=axes[1], edgecolor='black', shrink=0.8)
+axes[1].set_title("Estudios por paciente (Filtrado)", fontsize=13, fontweight='bold')
+axes[1].set_xlim(0, 10)
+
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Interpretación metodológica:** Si las gráficas estructurales o de prevalencia muestran un desbalance extremo (por ejemplo, si *Pneumonia* ha bajado a solo 500 imágenes), sabremos que el nivel de filtrado aplicado fue demasiado severo y deberemos relajar las restricciones en el Simulador Global."))
+
+### CELDA 54 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pandas as pd
+from IPython.display import display, Markdown
+
+# 1. Asegurar nombres de columnas
+col_edad = 'Age' if 'Age' in df_ini.columns else 'AGE_AT_CXR'
+col_sexo = 'Sex' if 'Sex' in df_ini.columns else 'GENDER'
+
+# Filtrar edades válidas
+df_edad = df_ini[(df_ini[col_edad] >= 0) & (df_ini[col_edad] <= 110)].copy()
+
+fig = plt.figure(figsize=(16, 12))
+sns.set_theme(style="whitegrid")
+
+# --- GRÁFICO 1: Distribución General ---
+ax1 = plt.subplot(2, 2, 1)
+sns.histplot(data=df_edad, x=col_edad, bins=30, kde=True, color='#9b59b6', ax=ax1, edgecolor='black')
+ax1.set_title("Distribución General de Edad", fontsize=13, fontweight='bold')
+
+# --- GRÁFICO 2: Edad por Sexo (Cambiado a Boxplot clásico) ---
+ax2 = plt.subplot(2, 2, 2)
+
+# Filtramos y nos aseguramos de que no queden categorías fantasma de 'Unknown'
+df_sexo_valido = df_edad[df_edad[col_sexo].isin(['Male', 'Female'])].copy()
+if hasattr(df_sexo_valido[col_sexo], 'cat'):
+    df_sexo_valido[col_sexo] = df_sexo_valido[col_sexo].cat.remove_unused_categories()
+
+# Usamos boxplot clásico
+sns.boxplot(
+    data=df_sexo_valido, 
+    x=col_sexo, 
+    y=col_edad, 
+    hue=col_sexo,             # Asignamos hue para que coincida con la paleta
+    palette={'Male': '#3498db', 'Female': '#e74c3c'}, 
+    legend=False,             # Quitamos la leyenda sobrante
+    ax=ax2,
+    showfliers=False          # Opcional: oculta los puntos atípicos para mayor limpieza
+)
+ax2.set_title("Distribución de Edad por Sexo", fontsize=13, fontweight='bold')
+
+# --- GRÁFICO 3: Boxplots por Patología ---
+ax3 = plt.subplot(2, 1, 2)
+
+cols_patologias = [
+    'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 
+    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture'
+]
+
+lista_edades_patologias = []
+for patologia in cols_patologias:
+    # Verificamos si la patología existe en las columnas para evitar errores
+    if patologia in df_edad.columns:
+        edades = df_edad[df_edad[patologia] == 1.0][col_edad]
+        temp_df = pd.DataFrame({col_edad: edades, 'Patologia': patologia})
+        lista_edades_patologias.append(temp_df)
+
+if lista_edades_patologias:
+    df_melted = pd.concat(lista_edades_patologias)
+    orden_patologias = df_melted.groupby('Patologia')[col_edad].median().sort_values(ascending=False).index
+
+    sns.boxplot(
+        data=df_melted, 
+        x='Patologia', 
+        y=col_edad, 
+        order=orden_patologias,
+        hue='Patologia',      # Añadido para evitar avisos de Seaborn
+        palette='Spectral', 
+        legend=False,
+        ax=ax3,
+        showfliers=False 
+    )
+    ax3.set_title("Rango de Edad por Patología Confirmada", fontsize=13, fontweight='bold')
+    ax3.set_xticklabels(ax3.get_xticklabels(), rotation=30, ha='right')
+
+plt.tight_layout()
+plt.show()
+

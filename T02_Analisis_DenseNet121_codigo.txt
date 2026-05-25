@@ -1,0 +1,1740 @@
+### CELDA 2 ###
+# =========================================================
+# 1. Módulos estándar y tipado
+# =========================================================
+import sys
+import os
+import re
+import time
+import copy
+import pickle
+import random
+import shutil
+from collections import Counter
+from typing import List, Optional, Tuple, Dict
+
+# Configuración de rutas del sistema
+sys.path.append(r"D:\ProyectosPython\Master_deep_learning_python")
+
+# =========================================================
+# 2. Manipulación de datos y matemáticas
+# =========================================================
+import numpy as np
+import pandas as pd
+
+# =========================================================
+# 3. Deep Learning: PyTorch y torchvision
+# =========================================================
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch import amp
+from torch.utils.data import DataLoader, Dataset, random_split
+
+import torchvision
+import torchvision.models as models
+import torchvision.transforms as transforms
+
+# =========================================================
+# 4. Explicabilidad (Grad-CAM)
+# =========================================================
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+from pytorch_grad_cam.utils.image import show_cam_on_image
+
+# =========================================================
+# 5. Machine Learning clásico y métricas
+# =========================================================
+import sklearn
+from sklearn.metrics import (
+    accuracy_score, 
+    f1_score, 
+    classification_report, 
+    confusion_matrix, 
+    multilabel_confusion_matrix, 
+    roc_curve, 
+    auc
+)
+
+# =========================================================
+# 6. Visualización
+# =========================================================
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# =========================================================
+# 7. Procesamiento de imágenes y tipografía
+# =========================================================
+import PIL.Image as Image
+from PIL import ImageOps, ImageDraw, ImageFont
+import matplotlib.font_manager as fm
+
+# =========================================================
+# 8. Entorno interactivo / notebooks
+# =========================================================
+import IPython
+from IPython.display import display, Markdown
+
+# =========================================================
+# 9. Configuración específica para notebooks
+# =========================================================
+%matplotlib inline
+
+# =========================================================
+# 10. Verificación exhaustiva de versiones
+# =========================================================
+print("=== Configuración del Entorno ===")
+print(f"Python Runtime       : {sys.version.split()[0]}")
+print(f"PyTorch Version      : {torch.__version__}")
+print(f"Torchvision Version  : {torchvision.__version__}")
+print(f"Numpy Version        : {np.__version__}")
+print(f"Pandas Version       : {pd.__version__}")
+print(f"Matplotlib Version   : {matplotlib.__version__}")
+print(f"Seaborn Version      : {sns.__version__}")
+print(f"Scikit-learn Version : {sklearn.__version__}")
+print(f"IPython Version      : {IPython.__version__}")
+
+### CELDA 4 ###
+def setup_environment():
+    """
+    Configura el dispositivo de cómputo y los parámetros del DataLoader.
+    Las decisiones priorizan estabilidad sobre paralelización agresiva en Windows.
+    """
+    print("\n=== Detección de Hardware ===")
+    
+    # Información de CPU
+    cpu_cores = os.cpu_count()
+    if cpu_cores is not None:
+        print(f"Núcleos lógicos CPU  : {cpu_cores}")
+    
+    # Configuración GPU/CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"Dispositivo          : GPU ({gpu_name})")
+        print(f"VRAM Disponible      : {vram_gb:.2f} GB")
+    else:
+        device = torch.device("cpu")
+        print("Dispositivo          : CPU")
+
+    # Configuración de Workers para DataLoader
+    if os.name == 'nt':
+        num_workers = 0
+        print("Configuración OS     : Windows (num_workers=0)")
+    else:
+        num_workers = 2
+        print("Configuración OS     : Unix/Linux (num_workers=2)")
+
+    return device, num_workers
+
+# Ejecución de la configuración
+device, NUM_WORKERS = setup_environment()
+
+print("-" * 60)
+print(f"Configuración Lista -> Device: {device} | Workers: {NUM_WORKERS}")
+
+### CELDA 6 ###
+def set_seed(seed=42):
+    """Fija las semillas para garantizar reproducibilidad en CPU y GPU."""
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    
+    # Determinismo en operaciones de convolución
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    print(f"\nSemilla global fijada en: {seed}")
+
+# Generador para reproducibilidad en DataLoaders
+g_cpu = torch.Generator()
+g_cpu.manual_seed(42)
+
+set_seed(42)
+
+### CELDA 8 ###
+ruta = "../chexpert_csv/train_cheXbert.csv"
+
+# Definición semántica de las columnas
+cols_patologias = [
+    'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 'Lung Lesion',
+    'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax',
+    'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices', 'No Finding'
+]
+
+# Diccionario de optimización de tipos
+tipos_optimizados = {
+    'Sex': 'category',
+    'Frontal/Lateral': 'category',
+    'AP/PA': 'category',
+    'Age': 'float32' # Se utiliza como medida de compatibilidad ante la posible presencia de valores nulos (NaN)
+}
+
+# Asignación de float32 a todas las patologías para reducir huella de memoria
+for patologia in cols_patologias:
+    tipos_optimizados[patologia] = 'float32'
+
+df_ini = pd.read_csv(ruta, dtype=tipos_optimizados)
+df_ini.columns = df_ini.columns.str.strip()
+
+# Extracción del ID del paciente y del estudio desde la ruta del archivo (Path)
+# Se emplean expresiones regulares para la extracción de los patrones identificativos de paciente y estudio a partir de la ruta de acceso de los archivos
+df_ini['Patient'] = df_ini['Path'].str.extract(r'(patient\d+)')
+df_ini['Study'] = df_ini['Path'].str.extract(r'(study\d+)')
+
+display(Markdown(f"**Número total de observaciones:** {df_ini.shape[0]}"))
+display(Markdown(f"**Número de variables (columnas):** {df_ini.shape[1]}"))
+display(Markdown("#### Primeras filas del dataset:"))
+display(df_ini.head())
+
+### CELDA 10 ###
+import pandas as pd
+import numpy as np
+from typing import Optional, List, Tuple, Dict
+import pandas as pd
+from IPython.display import display, Markdown
+
+# =====================================================================
+# Importación del módulo de filtrado personalizado y utilidades
+# =====================================================================
+
+def filtrar_chexpert_dataset_whitelist(
+    df_ini: pd.DataFrame,
+    cols_patologias: Optional[List[str]] = None,
+    permitir_positivos_solo_en: Optional[List[str]] = None,
+    incluir_vistas: Optional[List[str]] = None,
+    incluir_posiciones: Optional[List[str]] = None,
+    valores_permitidos: Optional[List[float]] = None,
+    eliminar_inconsistencias_nofinding: bool = True,
+    filtrar_edad_min: Optional[float] = None,
+    filtrar_edad_max: Optional[float] = None,
+    incluir_sexo: Optional[List[str]] = None,
+    validar_columnas: bool = True
+) -> Tuple[pd.DataFrame, Dict[str, float]]:
+
+    incluir_vistas = incluir_vistas or []
+    incluir_posiciones = incluir_posiciones or []
+    incluir_sexo = incluir_sexo or []
+
+    if cols_patologias is None:
+        cols_patologias = [
+            'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity',
+            'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis',
+            'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+        ]
+
+    # Validación estructural de columnas
+    if validar_columnas:
+        columnas_requeridas = cols_patologias + ['Frontal/Lateral', 'AP/PA', 'Age', 'Sex']
+        faltantes = [col for col in columnas_requeridas if col not in df_ini.columns]
+        if faltantes:
+            raise ValueError(f"Columnas requeridas no detectadas en la estructura de datos: {faltantes}")
+
+    df_filtrado = df_ini.copy()
+    total_original = len(df_filtrado)
+
+    perdida_por_positivos = 0
+    perdida_por_vista = 0
+    perdida_por_posicion = 0
+    perdida_por_valores = 0
+    perdida_por_inconsistencia = 0
+    perdida_por_edad = 0
+    perdida_por_sexo = 0
+
+    # Fase de Filtrado A: Whitelist de patologías positivas
+    # Se eliminan filas que den positivo (1.0) en patologías que NO estén en la whitelist
+    if permitir_positivos_solo_en is not None:
+        total_antes = len(df_filtrado)
+        patologias_prohibidas = [col for col in cols_patologias if col not in permitir_positivos_solo_en]
+        
+        if patologias_prohibidas:
+            mascara_prohibidas = (df_filtrado[patologias_prohibidas] == 1.0).any(axis=1)
+            df_filtrado = df_filtrado[~mascara_prohibidas]
+            
+        perdida_por_positivos = total_antes - len(df_filtrado)
+
+    # Fase de Filtrado B: Whitelist de vistas radiológicas (ej. ['Frontal'])
+    if incluir_vistas:
+        total_antes = len(df_filtrado)
+        mascara = df_filtrado['Frontal/Lateral'].isin(incluir_vistas)
+        df_filtrado = df_filtrado[mascara]
+        perdida_por_vista = total_antes - len(df_filtrado)
+
+    # Fase de Filtrado C: Whitelist de posiciones (ej. ['AP'])
+    if incluir_posiciones:
+        total_antes = len(df_filtrado)
+        mascara = df_filtrado['AP/PA'].isin(incluir_posiciones)
+        df_filtrado = df_filtrado[mascara]
+        perdida_por_posicion = total_antes - len(df_filtrado)
+
+    # Fase de Filtrado D: Whitelist de valores permitidos (ej. [0.0, 1.0, np.nan])
+    if valores_permitidos is not None:
+        total_antes = len(df_filtrado)
+        
+        # Separar los valores limpios de los nulos (NaN) para procesarlos de forma segura en Pandas
+        permitir_nan = any(pd.isna(v) for v in valores_permitidos)
+        valores_limpios = [v for v in valores_permitidos if not pd.isna(v)]
+        
+        mascara_validos = df_filtrado[cols_patologias].isin(valores_limpios)
+        if permitir_nan:
+            mascara_validos = mascara_validos | df_filtrado[cols_patologias].isna()
+            
+        # Queremos eliminar la fila si hay AL MENOS UNA columna con un valor NO válido
+        filas_invalidas = (~mascara_validos).any(axis=1)
+        df_filtrado = df_filtrado[~filas_invalidas]
+        perdida_por_valores = total_antes - len(df_filtrado)
+
+    # Fase de Filtrado E: Depuración de inconsistencias diagnósticas
+    if eliminar_inconsistencias_nofinding:
+        total_antes = len(df_filtrado)
+        otras_patologias = [col for col in cols_patologias if col != 'No Finding']
+
+        mascara = (
+            (df_filtrado['No Finding'] == 1.0) &
+            (df_filtrado[otras_patologias] == 1.0).any(axis=1)
+        )
+
+        df_filtrado = df_filtrado[~mascara]
+        perdida_por_inconsistencia = total_antes - len(df_filtrado)
+
+    # Fase de Filtrado F: Segmentación demográfica por rango etario
+    if filtrar_edad_min is not None:
+        total_antes = len(df_filtrado)
+        df_filtrado = df_filtrado[df_filtrado['Age'] >= filtrar_edad_min]
+        perdida_por_edad += total_antes - len(df_filtrado)
+
+    if filtrar_edad_max is not None:
+        total_antes = len(df_filtrado)
+        df_filtrado = df_filtrado[df_filtrado['Age'] <= filtrar_edad_max]
+        perdida_por_edad += total_antes - len(df_filtrado)
+
+    # Fase de Filtrado G: Whitelist demográfica por sexo
+    if incluir_sexo:
+        total_antes = len(df_filtrado)
+        df_filtrado = df_filtrado[df_filtrado['Sex'].isin(incluir_sexo)]
+        perdida_por_sexo = total_antes - len(df_filtrado)
+
+    # Cálculo de métricas de retención
+    total_final = len(df_filtrado)
+    total_perdido = total_original - total_final
+
+    porcentaje_retencion = (total_final / total_original) * 100 if total_original > 0 else 0
+    porcentaje_perdido = (total_perdido / total_original) * 100 if total_original > 0 else 0
+
+    reporte = {
+        "total_original": total_original,
+        "total_final": total_final,
+        "total_perdido": total_perdido,
+        "porcentaje_retencion": porcentaje_retencion,
+        "porcentaje_perdido": porcentaje_perdido,
+        "perdida_por_positivos": perdida_por_positivos,
+        "perdida_por_vista": perdida_por_vista,
+        "perdida_por_posicion": perdida_por_posicion,
+        "perdida_por_valores": perdida_por_valores,
+        "perdida_por_inconsistencia": perdida_por_inconsistencia,
+        "perdida_por_edad": perdida_por_edad,
+        "perdida_por_sexo": perdida_por_sexo
+    }
+
+    return df_filtrado, reporte
+
+# =====================================================================
+# Definición de la función integradora
+# =====================================================================
+def aplicar_filtrado_proyecto(df_ini):
+    """
+    Se encapsulan las variables de configuración en formato whitelist (lista blanca) 
+    para optimizar la ejecución secuencial del pipeline de procesamiento.
+    """
+    # Whitelist de patologías permitidas para ser positivas (inverso a su código original)
+    permitir_positivos_solo_en = [
+        'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity',
+        'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis',
+        'Pneumothorax', 'Pleural Effusion', 'Fracture', 'Support Devices'
+    ]
+
+    # Whitelist de metadatos permitidos (en lugar de excluir Lateral/PA, exigimos Frontal/AP)
+    incluir_vistas = ['Frontal']
+    incluir_posiciones = ['AP']
+    
+    # Whitelist de valores válidos. (Inverso a excluir el -1.0)
+    valores_permitidos = [0.0, 1.0, np.nan] 
+    
+    eliminar_inconsistencias_nofinding = True
+
+    # Filtros demográficos
+    filtrar_edad_min = None
+    filtrar_edad_max = None
+    incluir_sexo = ['Male', 'Female']
+  
+    # Ejecución del pipeline de filtrado en cascada
+    df_filtrado, reporte = filtrar_chexpert_dataset_whitelist(
+        df_ini=df_ini,
+        permitir_positivos_solo_en=permitir_positivos_solo_en,
+        incluir_vistas=incluir_vistas,
+        incluir_posiciones=incluir_posiciones,
+        valores_permitidos=valores_permitidos,
+        eliminar_inconsistencias_nofinding=eliminar_inconsistencias_nofinding,
+        filtrar_edad_min=filtrar_edad_min,
+        filtrar_edad_max=filtrar_edad_max,
+        incluir_sexo=incluir_sexo
+    )
+
+    return df_filtrado, reporte
+
+def auditar_dataset(df: pd.DataFrame, columnas_auditar: list = None):
+    """
+    Genera un reporte de auditoría mostrando el total de muestras
+    y la distribución exacta de valores para cada categoría/columna.
+    Ideal para ejecutar después de un pipeline de filtrado.
+    """
+    total_filas = len(df)
+    
+    # Si no se especifican columnas, auditamos las patologías y variables técnicas por defecto
+    if columnas_auditar is None:
+        columnas_auditar = [
+            'Frontal/Lateral', 'AP/PA', 'Sex', # Variables demográficas y técnicas
+            'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity',
+            'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis',
+            'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+        ]
+        
+    # Nos aseguramos de auditar solo columnas que realmente existan en el DataFrame actual
+    columnas_auditar = [col for col in columnas_auditar if col in df.columns]
+    
+    # Construcción del reporte en formato Markdown
+    reporte_md = f"### Auditoría del Dataset (Post-Procesamiento)\n"
+    reporte_md += f"**Total de muestras (imágenes) disponibles:** `{total_filas:,}`\n\n"
+    
+    reporte_md += "| Columna / Variable | Distribución de Valores (Conteo y Porcentaje) |\n"
+    reporte_md += "| :--- | :--- |\n"
+    
+    for col in columnas_auditar:
+        # Extraemos los conteos incluyendo los valores nulos (NaN)
+        conteos = df[col].value_counts(dropna=False)
+        
+        # Formateamos los valores para que se vean limpios en la tabla
+        detalles = []
+        for valor, cantidad in conteos.items():
+            # Manejo visual amigable de los nulos
+            str_valor = "NaN (Nulo)" if pd.isna(valor) else str(valor)
+            porcentaje = (cantidad / total_filas) * 100
+            detalles.append(f"**{str_valor}**: {cantidad:,} ({porcentaje:.1f}%)")
+            
+        # Unimos las categorías con un salto de línea HTML para que quepan en la celda
+        str_detalles = " <br> ".join(detalles)
+        
+        reporte_md += f"| **{col}** | {str_detalles} |\n"
+        
+    # Mostramos la tabla renderizada
+    display(Markdown(reporte_md))
+
+### CELDA 12 ###
+auditar_dataset(df_ini)
+
+### CELDA 14 ###
+df_filtrado, reporte = aplicar_filtrado_proyecto(df_ini)
+
+display(Markdown(f"""
+### Reporte del Pipeline de Exclusión (Whitelist)
+
+* **Dataset Inicial:** {reporte['total_original']:,} imágenes.
+* **Dataset Final Útil:** **{reporte['total_final']:,}** imágenes ({reporte['porcentaje_retencion']:.2f}% retenido).
+* **Imágenes Eliminadas:** {reporte['total_perdido']:,} ({reporte['porcentaje_perdido']:.2f}% perdido).
+
+**Desglose de eliminación por incumplimiento de criterios:**
+1. **Hallazgos no permitidos:** {reporte['perdida_por_positivos']:,}
+2. **Vista no permitida:** {reporte['perdida_por_vista']:,}
+3. **Posición no permitida:** {reporte['perdida_por_posicion']:,}
+4. **Valores no permitidos:** {reporte['perdida_por_valores']:,}
+5. **Inconsistencias diagnósticas:** {reporte['perdida_por_inconsistencia']:,} (`No Finding` conflictivo)
+6. **Edad fuera de rango:** {reporte['perdida_por_edad']:,}
+7. **Sexo no incluido:** {reporte['perdida_por_sexo']:,} 
+"""))
+
+# Auditoría visual
+auditar_dataset(df_filtrado)
+
+### CELDA 16 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from IPython.display import display, Markdown
+
+# Definimos las 14 patologías originales para ver cómo han quedado tras el filtrado
+cols_patologias = [
+    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 
+    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+]
+
+# Protegemos contra división por cero en caso de que el dataset quedara vacío por error
+total_filas = len(df_filtrado)
+if total_filas == 0:
+    total_filas = 1  
+
+# Calculamos cuántos '1.0' puros quedan en cada patología
+conteo_positivos = (df_filtrado[cols_patologias] == 1.0).sum().sort_values(ascending=False)
+
+# =========================================================
+# NUEVO: Filtramos para ocultar las categorías vacías (0 casos)
+# =========================================================
+conteo_positivos = conteo_positivos[conteo_positivos > 0]
+
+# Calculamos los porcentajes SOLO para las categorías que han sobrevivido al filtro
+porcentajes = (conteo_positivos / total_filas) * 100
+
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Dibujamos el gráfico
+sns.barplot(
+    x=conteo_positivos.values, 
+    y=conteo_positivos.index, 
+    hue=conteo_positivos.index,   
+    palette='viridis', 
+    legend=False,                 
+    ax=ax, 
+    edgecolor='black'
+)
+
+# Margen dinámico: 1% del valor máximo
+margen_texto = conteo_positivos.max() * 0.01
+
+# Añadir etiquetas de datos
+for i, (valor, pct) in enumerate(zip(conteo_positivos.values, porcentajes.values)):
+    ax.text(valor + margen_texto, i, f"{valor:,} ({pct:.1f}%)", va='center', fontsize=10)
+
+ax.set_title(f"Frecuencia de Patologías Confirmadas en Dataset Final (N={len(df_filtrado):,})", fontsize=14, fontweight='bold')
+ax.set_xlabel("Número de radiografías positivas")
+ax.set_ylabel("Patología")
+
+# Ajustar límite X
+ax.set_xlim(0, conteo_positivos.max() * 1.15) 
+
+plt.tight_layout()
+plt.show()
+
+### CELDA 18 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from IPython.display import display, Markdown
+
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+sns.set_theme(style="whitegrid")
+
+# ---------------------------------------------------------
+# 1. Distribución por Sexo
+# ---------------------------------------------------------
+col_sexo = 'Sex' if 'Sex' in df_filtrado.columns else 'GENDER'
+# Filtramos categorías inválidas para el gráfico
+df_sexo = df_filtrado[df_filtrado[col_sexo].isin(['Male', 'Female'])].copy()
+if hasattr(df_sexo[col_sexo], 'cat'):
+    df_sexo[col_sexo] = df_sexo[col_sexo].cat.remove_unused_categories()
+
+sns.countplot(
+    data=df_sexo, x=col_sexo, hue=col_sexo, 
+    palette={'Male': '#3498db', 'Female': '#e74c3c'}, 
+    legend=False, ax=axes[0, 0], edgecolor='black', 
+    dodge=False  # <--- FUERZA EL CENTRADO DE LA BARRA
+)
+axes[0, 0].set_title("Distribución por Sexo", fontsize=13, fontweight='bold')
+axes[0, 0].set_ylabel("Cantidad de imágenes")
+axes[0, 0].set_xlabel("Sexo")
+
+# CORRECCIÓN: Generamos etiquetas dinámicas soportando el separador de miles
+for container in axes[0, 0].containers:
+    etiquetas = [f"{v:,.0f}" if v > 0 else "" for v in container.datavalues]
+    axes[0, 0].bar_label(container, labels=etiquetas, padding=3, fontweight='bold')
+
+# ---------------------------------------------------------
+# 2. Distribución de Edad por Sexo (Boxplot)
+# ---------------------------------------------------------
+col_edad = 'Age' if 'Age' in df_filtrado.columns else 'AGE_AT_CXR'
+# Nos aseguramos de tomar edades lógicas (0-110)
+df_edad = df_sexo[(df_sexo[col_edad] >= 0) & (df_sexo[col_edad] <= 110)].copy()
+
+sns.boxplot(
+    data=df_edad, x=col_sexo, y=col_edad, hue=col_sexo, 
+    palette={'Male': '#3498db', 'Female': '#e74c3c'}, 
+    legend=False, ax=axes[0, 1], showfliers=False,
+    dodge=False  # <--- FUERZA EL CENTRADO DE LA CAJA
+)
+axes[0, 1].set_title("Distribución de Edad por Sexo", fontsize=13, fontweight='bold')
+axes[0, 1].set_ylabel("Edad (Años)")
+axes[0, 1].set_xlabel("Sexo")
+
+# ---------------------------------------------------------
+# 3. Vista (Frontal vs Lateral) - Verificación del Filtro
+# ---------------------------------------------------------
+sns.countplot(
+    data=df_filtrado, x='Frontal/Lateral', hue='Frontal/Lateral', 
+    palette='Set2', legend=False, ax=axes[1, 0], edgecolor='black',
+    dodge=False  # <--- FUERZA EL CENTRADO DE LA BARRA
+)
+axes[1, 0].set_title("Distribución de la Vista Radiológica", fontsize=13, fontweight='bold')
+axes[1, 0].set_ylabel("Cantidad de imágenes")
+axes[1, 0].set_xlabel("Tipo de Vista")
+
+# CORRECCIÓN: Etiquetas dinámicas
+for container in axes[1, 0].containers:
+    etiquetas = [f"{v:,.0f}" if v > 0 else "" for v in container.datavalues]
+    axes[1, 0].bar_label(container, labels=etiquetas, padding=3, fontweight='bold')
+
+# ---------------------------------------------------------
+# 4. Posición (AP vs PA) - Verificación del Filtro
+# ---------------------------------------------------------
+sns.countplot(
+    data=df_filtrado, x='AP/PA', hue='AP/PA', 
+    palette='Set3', legend=False, ax=axes[1, 1], edgecolor='black',
+    dodge=False  # <--- FUERZA EL CENTRADO DE LA BARRA
+)
+axes[1, 1].set_title("Distribución de la Posición del Paciente", fontsize=13, fontweight='bold')
+axes[1, 1].set_ylabel("Cantidad de imágenes")
+axes[1, 1].set_xlabel("Posición")
+
+# CORRECCIÓN: Etiquetas dinámicas
+for container in axes[1, 1].containers:
+    etiquetas = [f"{v:,.0f}" if v > 0 else "" for v in container.datavalues]
+    axes[1, 1].bar_label(container, labels=etiquetas, padding=3, fontweight='bold')
+
+plt.tight_layout()
+plt.show()
+
+# ---------------------------------------------------------
+# Conclusiones automatizadas
+# ---------------------------------------------------------
+display(Markdown("""
+> **Conclusiones del Análisis de Variables (Pre-Normalización):**
+> * **Sesgo Demográfico:** Revisando las gráficas superiores confirmamos que la representación de Edad y Sexo se mantiene coherente tras el filtrado masivo, evitando que la red neuronal aprenda sesgos de representación.
+> * **Verificación Técnica:** Las gráficas inferiores demuestran el éxito del *pipeline* de exclusión: las variables técnicas han colapsado a una única modalidad (ej. 100% vistas Frontales y posiciones AP). Esto homogeniza la distribución de píxeles, facilitando la convergencia del modelo preentrenado.
+"""))
+
+### CELDA 20 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+# 1. Preparación de los datos base
+cols_patologias_activas = conteo_positivos.index.tolist()
+df_binario = (df_filtrado[cols_patologias_activas] == 1.0).astype(int)
+matriz_coocurrencia = df_binario.T.dot(df_binario)
+
+total_filas = len(df_filtrado)
+if total_filas == 0:
+    total_filas = 1  
+
+matriz_coocurrencia_pct = (matriz_coocurrencia / total_filas) * 100
+
+# 2. Matriz 1: Todas las patologías
+matriz_completa = matriz_coocurrencia_pct.copy()
+np.fill_diagonal(matriz_completa.values, np.nan)
+
+# 3. Matriz 2: Solo patologías > 5%
+patologias_frecuentes = porcentajes[porcentajes > 5.0].index
+matriz_filtrada = matriz_coocurrencia_pct.loc[patologias_frecuentes, patologias_frecuentes].copy()
+np.fill_diagonal(matriz_filtrada.values, np.nan)
+
+# =========================================================
+# CONFIGURACIÓN DEL LIENZO DUAL (APILADO VERTICAL)
+# =========================================================
+# Creamos una figura muy alta (2 filas, 1 columna)
+fig, axes = plt.subplots(2, 1, figsize=(14, 20))
+
+# --- GRÁFICO SUPERIOR: Todas las Patologías ---
+sns.heatmap(
+    matriz_completa, 
+    annot=True, 
+    fmt=".1f", 
+    cmap="Reds", 
+    cbar_kws={'label': '% de co-ocurrencia'},
+    linewidths=0.5,
+    ax=axes[0]
+)
+
+# Añadimos el símbolo "%" (Gráfico Superior)
+for t in axes[0].texts:
+    if t.get_text() != "nan":
+        t.set_text(t.get_text() + "%")
+
+axes[0].set_title("A) Todas las Patologías", fontsize=16, fontweight='bold', pad=15)
+axes[0].set_xticklabels(axes[0].get_xticklabels(), rotation=45, ha='right', fontsize=11)
+axes[0].set_yticklabels(axes[0].get_yticklabels(), fontsize=11)
+
+# --- GRÁFICO INFERIOR: > 5% de Prevalencia ---
+sns.heatmap(
+    matriz_filtrada, 
+    annot=True, 
+    fmt=".1f", 
+    cmap="Blues",  
+    cbar_kws={'label': '% de co-ocurrencia'},
+    linewidths=0.5,
+    ax=axes[1]
+)
+
+# Añadimos el símbolo "%" (Gráfico Inferior)
+for t in axes[1].texts:
+    if t.get_text() != "nan":
+        t.set_text(t.get_text() + "%")
+
+axes[1].set_title("B) Patologías Principales (>5% Prevalencia)", fontsize=16, fontweight='bold', pad=15)
+axes[1].set_xticklabels(axes[1].get_xticklabels(), rotation=45, ha='right', fontsize=11)
+axes[1].set_yticklabels(axes[1].get_yticklabels(), fontsize=11)
+
+# Añadimos espacio extra entre las dos gráficas para evitar superposiciones
+plt.tight_layout(pad=4.0)
+plt.show()
+
+### CELDA 22 ###
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import display, Markdown
+
+# =====================================================================
+# 1. Estructura de Pacientes y Sexo
+# =====================================================================
+# Salvavidas: Si no existe la columna 'Study', usamos 'Path' para no romper la ejecución
+col_estudio = 'Study' if 'Study' in df_filtrado.columns else 'Path'
+
+df_pacientes_filt = df_filtrado.groupby('Patient').agg(
+    Num_Radiografias=('Path', 'count'),
+    Num_Estudios=(col_estudio, 'nunique'),
+    Sex=('Sex', 'first'),
+    Age=('Age', 'first')
+).reset_index()
+
+# =====================================================================
+# 2. LIMPIEZA DE METADATOS CATEGÓRICOS
+# =====================================================================
+# Destruye la estructura categórica heredada del groupby antes de graficar
+df_pacientes_filt['Sex'] = df_pacientes_filt['Sex'].astype(str)
+
+# Filtro Whitelist: nos quedamos estrictamente con Male y Female
+df_pacientes_filt = df_pacientes_filt[df_pacientes_filt['Sex'].isin(['Male', 'Female'])]
+
+# Generación del reporte dinámico
+texto_resumen = "### Resumen Estructural (A Nivel de Paciente)\n\n"
+texto_resumen += f"**Total de pacientes únicos:** `{len(df_pacientes_filt):,}`\n\n"
+
+for sexo in ['Male', 'Female']:
+    if sexo in df_pacientes_filt['Sex'].values:
+        df_s = df_pacientes_filt[df_pacientes_filt['Sex'] == sexo]
+        pct_pacientes = (len(df_s) / len(df_pacientes_filt)) * 100
+        texto_resumen += f"**Pacientes ({sexo}):**\n"
+        texto_resumen += f"* Pacientes únicos: {len(df_s):,} ({pct_pacientes:.1f}%)\n"
+        texto_resumen += f"* Total de radiografías: {df_s['Num_Radiografias'].sum():,}\n"
+        texto_resumen += f"* Media de radiografías por paciente: {df_s['Num_Radiografias'].mean():.2f}\n\n"
+
+display(Markdown(texto_resumen))
+
+# =====================================================================
+# 3. VISUALIZACIÓN DEMOGRÁFICA Y ESTRUCTURAL
+# =====================================================================
+fig = plt.figure(figsize=(16, 12))
+sns.set_theme(style="whitegrid")
+colores_sexo = {'Male': '#3498db', 'Female': '#e74c3c'}
+
+# --- Gráfico A: Radiografías por paciente ---
+ax1 = plt.subplot(2, 2, 1)
+sns.histplot(data=df_pacientes_filt, x='Num_Radiografias', hue='Sex', multiple='dodge', 
+             discrete=True, palette=colores_sexo, ax=ax1, edgecolor='black', shrink=0.8)
+ax1.set_title("Radiografías por Paciente", fontsize=13, fontweight='bold')
+ax1.set_xlim(0, 10)
+ax1.set_xticks(range(1, 11)) # Fuerzo a que el eje X muestre números enteros limpios (1, 2, 3...)
+
+# --- Gráfico B: Estudios por paciente ---
+ax2 = plt.subplot(2, 2, 2)
+sns.histplot(data=df_pacientes_filt, x='Num_Estudios', hue='Sex', multiple='dodge', 
+             discrete=True, palette=colores_sexo, ax=ax2, edgecolor='black', shrink=0.8)
+ax2.set_title("Estudios por Paciente", fontsize=13, fontweight='bold')
+ax2.set_xlim(0, 10)
+ax2.set_xticks(range(1, 11))
+
+# --- Gráfico C: Distribución General de Edad (Nivel Paciente) ---
+df_edad_valida = df_pacientes_filt[(df_pacientes_filt['Age'] >= 0) & (df_pacientes_filt['Age'] <= 110)]
+ax3 = plt.subplot(2, 2, 3)
+sns.histplot(data=df_edad_valida, x='Age', bins=30, kde=True, color='#9b59b6', ax=ax3, edgecolor='black')
+ax3.set_title("Distribución de Edad (Nivel Paciente)", fontsize=13, fontweight='bold')
+ax3.set_xlabel("Edad (Años)")
+ax3.set_ylabel("Cantidad de Pacientes")
+
+# --- Gráfico D: Edad por Sexo (Boxplot) ---
+ax4 = plt.subplot(2, 2, 4)
+sns.boxplot(
+    data=df_edad_valida, x='Sex', y='Age', hue='Sex', 
+    palette=colores_sexo, legend=False, ax=ax4, showfliers=False,
+    dodge=False  # <--- FUERZA EL CENTRADO DE LA CAJA (Adiós warnings)
+)
+ax4.set_title("Distribución de Edad por Sexo", fontsize=13, fontweight='bold')
+ax4.set_xlabel("Sexo")
+ax4.set_ylabel("Edad (Años)")
+
+plt.tight_layout()
+plt.show()
+
+### CELDA 24 ###
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from IPython.display import display, Markdown
+
+fig, ax = plt.subplots(figsize=(14, 6))
+
+lista_edades_patologias = []
+for patologia in cols_patologias_activas:
+    # Aislamos pacientes únicos que padecen la patología específica
+    df_patologia = df_filtrado[df_filtrado[patologia] == 1.0].drop_duplicates(subset=['Patient'])
+    edades = df_patologia[(df_patologia['Age'] >= 0) & (df_patologia['Age'] <= 110)]['Age']
+    
+    # Protegemos el código por si alguna patología se quedara sin pacientes tras algún filtro futuro
+    if not edades.empty:
+        temp_df = pd.DataFrame({'Age': edades, 'Patologia': patologia})
+        lista_edades_patologias.append(temp_df)
+
+if lista_edades_patologias:
+    df_melted = pd.concat(lista_edades_patologias)
+    # Ordenamos de mayor a menor según la mediana de edad
+    orden_patologias = df_melted.groupby('Patologia')['Age'].median().sort_values(ascending=False).index
+
+    sns.boxplot(
+        data=df_melted, x='Patologia', y='Age', order=orden_patologias,
+        hue='Patologia', palette='Spectral', legend=False, ax=ax, showfliers=False,
+        dodge=False  # <--- FUERZA EL CENTRADO Y EVITA WARNINGS
+    )
+    ax.set_title("Rango de Edad por Patología Confirmada (Nivel Paciente)", fontsize=14, fontweight='bold')
+    
+    # SOLUCIÓN AL WARNING DE MATPLOTLIB: 
+    # Fijamos explícitamente la posición de los ticks usando el rango exacto de las categorías
+    ax.set_xticks(range(len(orden_patologias)))
+    ax.set_xticklabels(orden_patologias, rotation=30, ha='right', fontsize=11)
+    
+    ax.set_ylabel("Edad (Años)")
+    ax.set_xlabel("Patología Radiológica")
+
+plt.tight_layout()
+plt.show()
+
+### CELDA 27 ###
+import torchvision.transforms as transforms
+from IPython.display import display, Markdown
+
+# =====================================================================
+# CONFIGURACIÓN DEL PIPELINE DE PREPROCESAMIENTO Y DATA AUGMENTATION
+# =====================================================================
+
+# Dimensión estándar exigida por la arquitectura convolucional (DenseNet-121)
+IMG_SIZE = 224 
+
+# NOTA METODOLÓGICA (ImageNet vs CheXpert):
+# Al hacer Transfer Learning con una red preentrenada en ImageNet, es imperativo 
+# utilizar sus valores originales de media y desviación estándar. Si usáramos los 
+# valores propios de CheXpert, los pesos de la primera capa convolucional sufrirían 
+# un "domain shift" y perderían su capacidad de extracción de características de bajo nivel.
+MEAN_VALS = [0.485, 0.456, 0.406]
+STD_VALS = [0.229, 0.224, 0.225]
+
+# Pipeline de Entrenamiento (Incluye Data Augmentation Conservador)
+train_transforms = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    
+    # Transformación afín leve: rotación máxima de 10º y traslación del 5%.
+    # ATENCIÓN CLÍNICA: Se omite intencionadamente el 'RandomHorizontalFlip'. 
+    # Voltear una radiografía de tórax invertiría la silueta cardíaca, 
+    # simulando una dextrocardia (enfermedad rara) e induciendo a error al modelo.
+    transforms.RandomAffine(degrees=10, translate=(0.05, 0.05)),
+    
+    transforms.ToTensor(),
+    transforms.Normalize(mean=MEAN_VALS, std=STD_VALS)
+])
+
+# Pipeline de Validación/Evaluación (Estricto, sin alteraciones espaciales)
+eval_transforms = transforms.Compose([
+    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=MEAN_VALS, std=STD_VALS)
+])
+
+# Confirmación visual de la configuración
+display(Markdown(f"**Transformaciones PyTorch configuradas con éxito.** Resolución de entrada fijada a `{IMG_SIZE}x{IMG_SIZE}` tensores normalizados."))
+
+### CELDA 29 ###
+import os
+import re
+import pandas as pd
+import numpy as np
+from IPython.display import display, Markdown
+
+# =========================================================
+# Partición Científica y Mapeo de Rutas Físicas (UNIFICADO)
+# =========================================================
+
+# 1. Definición estricta de patologías activas (Whitelist)
+cols_patologias = [
+    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 
+    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+]
+
+# =========================================================
+# FASE A: PREPARACIÓN DEL CONJUNTO SILVER (TRAIN / VAL)
+# =========================================================
+# 1. Política U-Zeros
+# Como previamente filtramos los -1.0, solo quedan 0.0, 1.0 y NaN. 
+# Asumimos los NaN como negativos (0.0) siguiendo la convención U-Zeros.
+df_filtrado[cols_patologias_activas] = df_filtrado[cols_patologias_activas].fillna(0.0)
+
+# 2. Mapeo de Rutas Absolutas para Train/Val (Búsqueda en Batches)
+directorio_raiz_train = r"C:\CheXpertDataset\chexpertchestxrays-u20210408"
+posibles_batches = [
+    "CheXpert-v1.0 batch 2 (train 1)",
+    "CheXpert-v1.0 batch 3 (train 2)",
+    "CheXpert-v1.0 batch 4 (train 3)"
+]
+
+def obtener_ruta_absoluta_train(ruta_csv):
+    match = re.search(r'(patient\d+/study\d+/.*\.jpg)', ruta_csv)
+    if match:
+        parte_relativa = match.group(1).replace('/', os.sep)
+        for batch in posibles_batches:
+            ruta_prueba = os.path.join(directorio_raiz_train, batch, parte_relativa)
+            if os.path.exists(ruta_prueba):
+                return ruta_prueba
+    return None
+
+print("Mapeando rutas de Entrenamiento/Validación en el disco local...")
+df_filtrado['Ruta_Absoluta'] = df_filtrado['Path'].apply(obtener_ruta_absoluta_train)
+
+# Eliminamos filas que no se encontraron físicamente en el disco
+total_antes = len(df_filtrado)
+df_filtrado = df_filtrado.dropna(subset=['Ruta_Absoluta']).reset_index(drop=True)
+if len(df_filtrado) < total_antes:
+    print(f"⚠️ Se descartaron {total_antes - len(df_filtrado)} imágenes por no encontrarse en el disco.")
+
+# 3. Partición 90/10 a Nivel de Paciente (Evita Data Leakage)
+df_filtrado['Patient'] = df_filtrado['Path'].str.extract(r'(patient\d+)')
+pacientes_unicos = df_filtrado['Patient'].unique()
+
+np.random.seed(42) # Semilla fija para reproducibilidad científica
+np.random.shuffle(pacientes_unicos)
+
+train_limit = int(len(pacientes_unicos) * 0.90)
+pacientes_train = pacientes_unicos[:train_limit]
+pacientes_val = pacientes_unicos[train_limit:]
+
+df_train = df_filtrado[df_filtrado['Patient'].isin(pacientes_train)].reset_index(drop=True)
+df_val = df_filtrado[df_filtrado['Patient'].isin(pacientes_val)].reset_index(drop=True)
+
+
+# =========================================================
+# FASE B: PREPARACIÓN DEL CONJUNTO GOLD (TEST)
+# =========================================================
+ruta_valid_csv = r"C:\CheXpertDataset\chexpertchestxrays-u20210408\CheXpert-v1.0 batch 1 (validate & csv)\CheXpert-v1.0 batch 1 (validate & csv)\valid.csv"
+df_test = pd.read_csv(ruta_valid_csv)
+
+# 0. ALINEACIÓN DE DOMINIO (Prevención de Domain Shift)
+# Eliminamos las radiografías laterales porque la red solo se entrenó con frontales
+total_test_antes = len(df_test)
+df_test = df_test[df_test['Frontal/Lateral'] == 'Frontal'].reset_index(drop=True)
+print(f"Filtro de Test: Se descartaron {total_test_antes - len(df_test)} imágenes laterales. Quedan {len(df_test)} frontales puras.")
+
+# 1. Política U-Zeros en Test
+df_test[cols_patologias_activas] = df_test[cols_patologias_activas].fillna(0.0)
+
+# 2. Mapeo de Rutas Absolutas para Test (Batch 1)
+directorio_raiz_valid = r"C:\CheXpertDataset\chexpertchestxrays-u20210408\CheXpert-v1.0 batch 1 (validate & csv)\CheXpert-v1.0 batch 1 (validate & csv)"
+
+def mapear_ruta_valid_definitiva(ruta_csv):
+    parte_relativa = ruta_csv.split('CheXpert-v1.0/')[-1] 
+    ruta_limpia = parte_relativa.replace('/', os.sep)
+    return os.path.join(directorio_raiz_valid, ruta_limpia)
+
+print("Mapeando rutas de Test (Gold Standard) en el disco...")
+df_test['Ruta_Absoluta'] = df_test['Path'].apply(mapear_ruta_valid_definitiva)
+
+# Eliminamos filas que no existen físicamente
+df_test = df_test[df_test['Ruta_Absoluta'].apply(os.path.exists)].reset_index(drop=True)
+
+
+# =========================================================
+# FASE C: REPORTE FINAL DE AUDITORÍA
+# =========================================================
+print("Proceso completado. Generando reporte...")
+
+display(Markdown(f"""
+### Resumen del Particionado y Mapeo Físico
+| Subconjunto | Origen de los Datos | Calidad de Etiquetas | Pacientes | Imágenes | Función en el Proyecto |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Train (90%)** | `train_cheXbert.csv` | *Silver* (Bot NLP) | {len(pacientes_train):,} | {len(df_train):,} | Ajuste de pesos y aprendizaje (Backpropagation) |
+| **Validation (10%)** | `train_cheXbert.csv` | *Silver* (Bot NLP) | {len(pacientes_val):,} | {len(df_val):,} | Monitorización de sobreajuste (*Early Stopping*) |
+| **Test** | `valid.csv` | **Gold** (3 Radiólogos) | {df_test['Path'].str.extract(r'(patient\d+)')[0].nunique():,} | {len(df_test):,} | **Examen Final y Curvas ROC** |
+"""))
+
+### CELDA 31 ###
+import torch
+from torch.utils.data import Dataset
+from PIL import Image
+import numpy as np
+from IPython.display import display, Markdown
+
+# =====================================================================
+# DEFINICIÓN DE LA CLASE DATASET (PYTORCH)
+# =====================================================================
+class CheXpertDataset(Dataset):
+    def __init__(self, dataframe, transform=None, etiquetas_cols=None):
+        self.df = dataframe.reset_index(drop=True)
+        self.transform = transform
+        
+        # Si no se pasan etiquetas, usamos la variable global activa (las 13 patologías)
+        if etiquetas_cols is None:
+            self.etiquetas_cols = cols_patologias_activas
+        else:
+            self.etiquetas_cols = etiquetas_cols
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        # 1. Localización física del archivo
+        img_path = self.df.loc[idx, 'Ruta_Absoluta']
+        
+        # 2. Carga y Conversión
+        # NOTA METODOLÓGICA: Las imágenes originales son en escala de grises (1 canal).
+        # Se fuerza la conversión a RGB (3 canales idénticos) porque las arquitecturas 
+        # preentrenadas en ImageNet (DenseNet, ResNet) exigen tensores de entrada [3, H, W].
+        image = Image.open(img_path).convert('RGB')
+        
+        # 3. Aplicación de Data Augmentation y Normalización
+        if self.transform:
+            image = self.transform(image)
+            
+        # 4. Vectorización de las etiquetas clínicas
+        labels = self.df.loc[idx, self.etiquetas_cols].values.astype(np.float32)
+        labels = torch.tensor(labels)
+        
+        return image, labels
+
+# =====================================================================
+# INSTANCIACIÓN DE LOS CONJUNTOS DE DATOS (CORREGIDO PARA 13 CLASES)
+# =====================================================================
+# Pasamos explícitamente cols_patologias_activas para asegurar que se usan las 13
+train_dataset = CheXpertDataset(dataframe=df_train, transform=train_transforms, etiquetas_cols=cols_patologias_activas)
+val_dataset = CheXpertDataset(dataframe=df_val, transform=eval_transforms, etiquetas_cols=cols_patologias_activas)
+test_dataset = CheXpertDataset(dataframe=df_test, transform=eval_transforms, etiquetas_cols=cols_patologias_activas)
+
+# =====================================================================
+# PRUEBA DE INTEGRIDAD Y REPORTE
+# =====================================================================
+# Extraemos el primer paciente del entrenamiento para auditar la tubería de datos
+img_tensor, labels_tensor = train_dataset[0]
+
+# Asserts para blindar la ejecución (ahora dinámicos según el tamaño de la lista)
+assert img_tensor.shape == (3, IMG_SIZE, IMG_SIZE), f"Error de dimensiones: {img_tensor.shape}"
+assert len(labels_tensor) == len(cols_patologias_activas), f"Error de etiquetas: Se esperaban {len(cols_patologias_activas)}, hay {len(labels_tensor)}"
+
+# Reporte visual
+display(Markdown(f"""
+### Integridad de los Datasets de PyTorch Verificada
+
+* **Instancias Creadas:**
+  * **Train:** `{len(train_dataset):,}` tensores.
+  * **Validation:** `{len(val_dataset):,}` tensores.
+  * **Test:** `{len(test_dataset):,}` tensores.
+
+* **Auditoría del Tensor de Entrada (Sample 0):**
+  * **Forma (Shape):** `{tuple(img_tensor.shape)}` *(Canales, Alto, Ancho)*
+  * **Formato de Etiquetas:** `{tuple(labels_tensor.shape)}` *(Array de {len(cols_patologias_activas)} variables binarias)*
+  * **Tipo de Dato (dtype):** `{img_tensor.dtype}`
+"""))
+
+### CELDA 33 ###
+import os
+from torch.utils.data import DataLoader
+from IPython.display import display, Markdown
+
+# =====================================================================
+# CONFIGURACIÓN DE LOS DATALOADERS Y OPTIMIZACIÓN DE HARDWARE
+# =====================================================================
+
+# Adaptación segura del número de trabajadores según el sistema operativo
+# En Windows ('nt'), usar múltiples workers en Jupyter suele causar bloqueos,
+# mientras que en Linux/Colab podemos usar 2 o más para paralelizar la carga.
+NUM_WORKERS = 0 if os.name == 'nt' else 2
+
+# Tamaños de lote asimétricos (Asymmetric Batch Sizing)
+BATCH_SIZE = 64        # Restringido por el tamaño del modelo y el cálculo de gradientes
+BATCH_SIZE_TEST = 256  # Optimizado para forward pass (Inferencia rápida sin gradientes)
+
+# 1. DataLoader de Entrenamiento
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=BATCH_SIZE,
+    shuffle=True,             # Estocasticidad para evitar sesgos de orden por época
+    num_workers=NUM_WORKERS,  
+    pin_memory=True,          # Reserva memoria en RAM para acelerar la transferencia a GPU
+    drop_last=True            # Descarta el último lote incompleto para estabilizar BatchNormalization
+)
+
+# 2. DataLoader de Validación
+val_loader = DataLoader(
+    val_dataset,
+    batch_size=BATCH_SIZE_TEST,
+    shuffle=False,            # No es necesario barajar en validación
+    num_workers=NUM_WORKERS,
+    pin_memory=True
+)
+
+# 3. DataLoader de Test (Gold Standard)
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=BATCH_SIZE_TEST,
+    shuffle=False,            
+    num_workers=NUM_WORKERS,
+    pin_memory=True
+)
+
+# Reporte visual para la memoria
+display(Markdown(f"""
+### Configuración de los Iteradores de Memoria (DataLoaders)
+* **Entrenamiento:** Lotes de `{BATCH_SIZE}` muestras (`{len(train_loader):,}` iteraciones por época).
+* **Validación:** Lotes de `{BATCH_SIZE_TEST}` muestras (`{len(val_loader):,}` iteraciones por evaluación).
+* **Test:** Lotes de `{BATCH_SIZE_TEST}` muestras (`{len(test_loader):,}` iteraciones por evaluación).
+* **Paralelización:** `{NUM_WORKERS}` subprocesos de carga con `pin_memory=True`.
+"""))
+
+### CELDA 36 ###
+
+print("Descargando/Cargando pesos de DenseNet-121 preentrenada en ImageNet...")
+
+# 1. Instanciación del modelo base con pesos por defecto (ImageNet)
+pesos = models.DenseNet121_Weights.DEFAULT
+modelo = models.densenet121(weights=pesos)
+
+# 2. Adaptación del cabezal de clasificación (Head) con Dropout
+num_caracteristicas_entrada = modelo.classifier.in_features
+numero_de_clases = len(cols_patologias_activas) # 7 patologías activas
+
+# Sustituimos la última capa empaquetando un Dropout y una capa Lineal
+modelo.classifier = nn.Sequential(
+    nn.Dropout(p=0.2), # Apagamos el 20% de las neuronas en cada iteración para evitar sobreajuste
+    nn.Linear(in_features=num_caracteristicas_entrada, out_features=numero_de_clases)
+)
+
+# 3. Transferencia a la tarjeta gráfica (GPU)
+modelo = modelo.to(device)
+
+# 4. Reporte técnico de la arquitectura
+parametros_totales = sum(p.numel() for p in modelo.parameters())
+parametros_entrenables = sum(p.numel() for p in modelo.parameters() if p.requires_grad)
+
+display(Markdown(f"""
+Arquitectura Inicializada: `DenseNet-121`
+* **Dispositivo de Cómputo:** `{device}` (Cargado en VRAM).
+* **Parámetros Totales:** `{parametros_totales:,}`
+* **Parámetros Entrenables:** `{parametros_entrenables:,}` (100% descongelados).
+* **Capa de Salida (Head):** `Sequential(Dropout(p=0.2), Linear({num_caracteristicas_entrada}, {numero_de_clases}))`
+"""))
+
+### CELDA 38 ###
+# 1. CÁLCULO DE PESOS POSITIVOS (Estrategia Anti-Desbalanceo)
+# Se calcula solo sobre Train para evitar fuga de datos (Data Leakage)
+pos_weights_list = []
+
+for patologia in cols_patologias_activas:
+    positivos = (df_train[patologia] == 1.0).sum()
+    positivos = max(positivos, 1) # Prevención de división por cero
+    
+    negativos = len(df_train) - positivos
+    peso = negativos / positivos
+    pos_weights_list.append(peso)
+
+# Enviamos el vector de pesos a la GPU
+pos_weights_tensor = torch.tensor(pos_weights_list, dtype=torch.float32).to(device)
+
+# 2. DEFINICIÓN DE LA FUNCIÓN DE PÉRDIDA CON PENALIZACIÓN
+criterio = nn.BCEWithLogitsLoss(pos_weight=pos_weights_tensor)
+
+# 3. DEFINICIÓN DEL OPTIMIZADOR Y SCHEDULER
+LEARNING_RATE = 1e-4
+
+# AdamW aplica una regularización L2 (Weight Decay) más efectiva que el Adam estándar
+optimizador = optim.AdamW(modelo.parameters(), lr=LEARNING_RATE, weight_decay=1e-2)
+
+# Scheduler: Reduce el LR a la décima parte si la pérdida en validación se estanca
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    optimizador, 
+    mode='min', 
+    factor=0.1, 
+    patience=2
+)
+
+# 4. REPORTE TÉCNICO
+pesos_str = "\n".join([f"* **{cols_patologias_activas[i]}:** {peso:.2f}" for i, peso in enumerate(pos_weights_list)])
+
+display(Markdown(f"""
+### Configuración del Motor Matemático
+* **Función de Pérdida:** `BCEWithLogitsLoss` (Multietiqueta con `pos_weight`).
+* **Optimizador:** `AdamW` (LR = `{LEARNING_RATE}`, Weight Decay = `0.01`).
+* **Pesos de Penalización Aplicados:**
+{pesos_str}
+
+> **Justificación:** Las clases con mayor peso (menor frecuencia) generarán gradientes más fuertes, evitando que el modelo se sesgue hacia las patologías mayoritarias.
+"""))
+
+### CELDA 40 ###
+def calculate_metrics(y_true, y_pred):
+    """
+    Calcula métricas para clasificación multietiqueta.
+    y_pred debe ser un array binario (0 o 1) tras aplicar el umbral.
+    """
+    acc = accuracy_score(y_true, y_pred)
+    f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
+    return {'accuracy': acc, 'f1_macro': f1}
+
+### CELDA 42 ###
+class EarlyStopping:
+    def __init__(self, patience=6, min_delta=0.0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+
+class ModelCheckpoint:
+    def __init__(self):
+        self.best_f1 = -float('inf')
+        self.best_model_state = None
+        
+    def __call__(self, model, f1_val):
+        if f1_val > self.best_f1:
+            self.best_f1 = f1_val
+            self.best_model_state = copy.deepcopy(model.state_dict())
+            return True
+        return False
+
+### CELDA 44 ###
+def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device):
+    """
+    Bucle principal adaptado para CheXpert y RTX 4060 (Precisión Mixta Moderna).
+    Incluye monitorización detallada por lotes (batches) y métricas de época.
+    """
+    early_stopping = EarlyStopping(patience=6)
+    model_checkpoint = ModelCheckpoint()
+    scaler = amp.GradScaler('cuda')
+    
+    history = {'train_loss': [], 'val_loss': [], 'val_acc': [], 'val_f1': []}
+    
+    model = model.to(device)
+    print(f"=== INICIO DE ENTRENAMIENTO EN: {str(device).upper()} ===")
+    start_time = time.time()
+
+    for epoch in range(num_epochs):
+        # 1. Obtenemos el Learning Rate actual del optimizador
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"\n--- ÉPOCA {epoch+1}/{num_epochs} | LR Actual: {current_lr:.6f} ---")
+        
+        # =================== FASE DE ENTRENAMIENTO ===================
+        model.train()
+        running_loss = 0.0
+        
+        # Usamos enumerate para saber en qué lote (batch) estamos
+        for i, (images, labels) in enumerate(train_loader):
+            images, labels = images.to(device), labels.to(device)
+            
+            optimizer.zero_grad()
+            
+            with amp.autocast('cuda'):
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            running_loss += loss.item()
+            
+            # --- IMPRESIÓN DE PROGRESO (Cada 100 lotes o al final) ---
+            if (i + 1) % 100 == 0 or (i + 1) == len(train_loader):
+                print(f"   [Progreso] Lote {i+1:04d}/{len(train_loader)} | Loss actual: {loss.item():.4f}")
+                
+        epoch_train_loss = running_loss / len(train_loader)
+        history['train_loss'].append(epoch_train_loss)
+        
+        # =================== FASE DE VALIDACIÓN ===================
+        model.eval()
+        val_running_loss = 0.0
+        all_labels, all_preds = [], []
+        
+        with torch.no_grad():
+            for images, labels in val_loader:
+                images, labels = images.to(device), labels.to(device)
+                
+                with amp.autocast('cuda'):
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                
+                val_running_loss += loss.item()
+                
+                preds = (torch.sigmoid(outputs) > 0.5).float()
+                all_preds.append(preds.cpu().numpy())
+                all_labels.append(labels.cpu().numpy())
+        
+        val_epoch_loss = val_running_loss / len(val_loader)
+        y_true = np.vstack(all_labels)
+        y_pred = np.vstack(all_preds)
+        
+        metrics = calculate_metrics(y_true, y_pred)
+        
+        history['val_loss'].append(val_epoch_loss)
+        history['val_acc'].append(metrics['accuracy'])
+        history['val_f1'].append(metrics['f1_macro'])
+        
+        scheduler.step(val_epoch_loss)
+        
+        # =================== CONTROL (CALLBACKS) ===================
+        print(f"\n   >> RESULTADOS ÉPOCA {epoch+1}:")
+        print(f"      Train Loss: {epoch_train_loss:.4f} | Val Loss: {val_epoch_loss:.4f}")
+        print(f"      Val Acc:    {metrics['accuracy']:.4f} | Val F1:   {metrics['f1_macro']:.4f}")
+        
+        # Comprobamos si hay nuevo mejor modelo
+        saved = model_checkpoint(model, metrics['f1_macro'])
+        if saved:
+            print(f"      ¡NUEVO MEJOR MODELO! F1-Score subió a {metrics['f1_macro']:.4f}.")
+        
+        early_stopping(val_epoch_loss)
+        if early_stopping.early_stop:
+            print(f"\nEarly Stopping activado en la época {epoch+1}. El modelo ha dejado de mejorar.")
+            break
+            
+    total_time = (time.time() - start_time) / 60
+    print(f"\n=== ENTRENAMIENTO FINALIZADO EN {total_time:.2f} MINUTOS ===")
+    
+    # RESTAURACIÓN DEL MEJOR ESTADO
+    if model_checkpoint.best_model_state:
+        model.load_state_dict(model_checkpoint.best_model_state)
+        torch.save(model.state_dict(), "mejor_modelo_chexpert.pth")
+        print("Pesos restaurados al punto de mayor F1-Score y guardados en disco duro.")
+        
+    return history, model
+
+### CELDA 45 ###
+# --- CONFIGURACIÓN ---
+MODELO_GUARDADO = True  
+REENTRENAMIENTO = False
+RUTA_MODELO = "mejor_modelo_chexpert.pth"
+RUTA_HISTORIAL = "historial_entrenamiento.pkl" # Nuevo archivo para las curvas
+EPOCHS = 10 # Definimos el número de épocas (como vimos en el benchmark, 10 épocas podrían ser razonables para un entrenamiento completo)
+# ---------------------
+
+def mostrar_info_modelo(model):
+    """Muestra un resumen técnico del modelo."""
+    print("-" * 30)
+    print("RESUMEN DEL MODELO")
+    print("-" * 30)
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Parámetros totales:    {total_params:,}")
+    print(f"Parámetros entrenables: {trainable_params:,}")
+    print(f"Tipo de modelo:        {type(model).__name__}")
+    print("-" * 30)
+
+def graficar_entrenamiento(hist):
+    """Genera gráficas de Loss y Métricas (Accuracy/F1) adaptadas a CheXpert."""
+    if hist is None: 
+        print("No hay historial disponible para graficar.")
+        return
+        
+    epochs = range(1, len(hist['train_loss']) + 1)
+    
+    plt.figure(figsize=(14, 5))
+    
+    # 1. Gráfica de Loss (Entrenamiento vs Validación)
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, hist['train_loss'], label='Train Loss', marker='o')
+    plt.plot(epochs, hist['val_loss'], label='Val Loss', marker='s')
+    plt.title('Evolución de la Pérdida (Loss)')
+    plt.xlabel('Épocas')
+    plt.ylabel('Pérdida (BCE)')
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.6)
+    
+    # 2. Gráfica de Métricas de Validación (Accuracy y F1-Score)
+    if 'val_acc' in hist and 'val_f1' in hist:
+        plt.subplot(1, 2, 2)
+        plt.plot(epochs, hist['val_acc'], label='Validation Accuracy', marker='^', color='green')
+        plt.plot(epochs, hist['val_f1'], label='Validation F1-Macro', marker='d', color='purple')
+        plt.title('Rendimiento en Validación')
+        plt.xlabel('Épocas')
+        plt.ylabel('Puntuación')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.6)
+        
+    plt.tight_layout()
+    plt.show()
+
+# --- LÓGICA PRINCIPAL ---
+
+if MODELO_GUARDADO and not REENTRENAMIENTO and os.path.exists(RUTA_MODELO):
+    print(f"Cargando modelo y historial guardados...")
+    
+    # Cargar pesos
+    modelo.load_state_dict(torch.load(RUTA_MODELO, map_location=device))
+    modelo.eval()
+    
+    # Cargar historial (curvas)
+    if os.path.exists(RUTA_HISTORIAL):
+        with open(RUTA_HISTORIAL, 'rb') as f:
+            history = pickle.load(f)
+    else:
+        history = None
+        print("Aviso: No se encontró el archivo de historial. Las gráficas no se mostrarán.")
+    
+    print("Cargado con éxito")
+
+else:
+    print(f"Iniciando entrenamiento por {EPOCHS} épocas...")
+    history, modelo = train_model(
+        model=modelo, 
+        train_loader=train_loader, 
+        val_loader=val_loader,
+        criterion=criterio, 
+        optimizer=optimizador, 
+        scheduler=scheduler,
+        num_epochs=EPOCHS, 
+        device=device
+    )
+    
+    # Guardar todo
+    torch.save(modelo.state_dict(), RUTA_MODELO)
+    with open(RUTA_HISTORIAL, 'wb') as f:
+        pickle.dump(history, f)
+    print("\nEntrenamiento finalizado y guardado.")
+
+# --- RESULTADOS FINALES ---
+mostrar_info_modelo(modelo)
+graficar_entrenamiento(history)
+
+### CELDA 47 ###
+print("Cargando los pesos óptimos del modelo...")
+
+# 1. Aseguramos que el modelo está en modo evaluación y en el dispositivo correcto
+try:
+    modelo.load_state_dict(torch.load("mejor_modelo_chexpert.pth", weights_only=True, map_location=device))
+except TypeError:
+    # Salvavidas para compatibilidad con PyTorch antiguo
+    modelo.load_state_dict(torch.load("mejor_modelo_chexpert.pth", map_location=device))
+
+modelo.eval()
+modelo = modelo.to(device)
+
+all_labels_test = []
+all_preds_test = []
+all_probs_test = [] # Guardamos las probabilidades puras para las curvas ROC
+
+print("Iniciando inferencia sobre el Conjunto de Test (Gold Standard)...")
+
+with torch.no_grad():
+    for images, labels in test_loader:
+        images, labels = images.to(device), labels.to(device)
+        
+        # Inferencia rápida (usando AMP si la gráfica es compatible)
+        with torch.amp.autocast('cuda'):
+            outputs = modelo(images)
+            probs = torch.sigmoid(outputs) # Probabilidad continua [0, 1]
+            preds = (probs > 0.5).float()  # Decisión clínica binaria (Umbral 0.5)
+            
+        all_labels_test.append(labels.cpu().numpy())
+        all_preds_test.append(preds.cpu().numpy())
+        all_probs_test.append(probs.cpu().numpy())
+
+# Apilamos los resultados en matrices de NumPy
+y_true_test = np.vstack(all_labels_test)
+y_pred_test = np.vstack(all_preds_test)
+y_probs_test = np.vstack(all_probs_test)
+
+print(f"Inferencia completada. Pacientes procesados: {len(y_true_test)}")
+
+### CELDA 49 ###
+# Generamos el reporte de Scikit-Learn
+reporte = classification_report(
+    y_true_test, 
+    y_pred_test, 
+    target_names=cols_patologias_activas, 
+    zero_division=0
+)
+
+print("="*60)
+print("REPORTE DE RENDIMIENTO CLÍNICO (TEST SET GOLD STANDARD)")
+print("="*60)
+print(reporte)
+print("="*60)
+
+### CELDA 51 ###
+fig, ax = plt.subplots(figsize=(12, 8))
+
+# CORRECCIÓN: Usamos tab20 porque tenemos más de 10 patologías (13 en total)
+colores = plt.cm.tab20.colors 
+
+# Calculamos y dibujamos la curva para cada patología
+for i, patologia in enumerate(cols_patologias_activas):
+    # Extraemos la columna 'i' de las etiquetas reales y las probabilidades
+    y_true_clase = y_true_test[:, i]
+    y_prob_clase = y_probs_test[:, i]
+    
+    # Si por algún motivo matemático una clase en test solo tiene 0s o 1s, se omite
+    if len(np.unique(y_true_clase)) > 1:
+        fpr, tpr, _ = roc_curve(y_true_clase, y_prob_clase)
+        roc_auc = auc(fpr, tpr)
+        
+        ax.plot(fpr, tpr, color=colores[i], lw=2, 
+                label=f'{patologia} (AUC = {roc_auc:.3f})')
+
+# Línea base del azar (Diagonal)
+ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--', alpha=0.5, label='Azar (AUC = 0.500)')
+
+# Formateo visual del gráfico
+ax.set_xlim([0.0, 1.0])
+ax.set_ylim([0.0, 1.05])
+ax.set_xlabel('Tasa de Falsos Positivos (1 - Especificidad)', fontsize=12)
+ax.set_ylabel('Tasa de Verdaderos Positivos (Sensibilidad)', fontsize=12)
+ax.set_title('Curvas ROC Multietiqueta - Evaluación Final CheXpert', fontsize=15, fontweight='bold')
+ax.legend(loc="lower right", fontsize=10)
+ax.grid(True, linestyle=':', alpha=0.7)
+
+plt.tight_layout()
+plt.show()
+
+display(Markdown("> **Análisis Clínico:** La representación ROC permite identificar qué patologías presentan firmas radiológicas más nítidas para la red (curvas más cercanas a la esquina superior izquierda) y cuáles resultan más ambiguas, requiriendo en el futuro arquitecturas de mayor resolución o aprendizaje guiado por atención espacial."))
+
+### CELDA 53 ###
+def inspeccion_visual(loader, model, classes, device, n_images=6):
+    model.eval()
+    images_shown = 0
+    plt.figure(figsize=(16, 10))
+    
+    # Media y std de ImageNet (ajusta si usaste otros)
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(device)
+            outputs = model(images)
+            probs = torch.sigmoid(outputs).cpu().numpy()
+            
+            for i in range(images.size(0)):
+                if images_shown >= n_images: break
+                
+                # Desnormalizar imagen para mostrarla
+                img = images[i].cpu().numpy().transpose((1, 2, 0))
+                img = std * img + mean
+                img = np.clip(img, 0, 1)
+                
+                # Obtener nombres de patologías reales y predichas (>0.5)
+                reales = [classes[j] for j, val in enumerate(labels[i]) if val == 1]
+                predichas = [f"{classes[j]} ({probs[i][j]:.2f})" for j, p in enumerate(probs[i]) if p > 0.5]
+                
+                plt.subplot(2, 3, images_shown + 1)
+                plt.imshow(img, cmap='bone') # Estilo radiografía
+                plt.title(f"REAL: {', '.join(reales) if reales else 'Sano'}\nPRED: {', '.join(predichas) if predichas else 'Sano'}", 
+                          fontsize=9, color='blue' if set(reales) == set([p.split(' ')[0] for p in predichas]) else 'red')
+                plt.axis('off')
+                images_shown += 1
+            if images_shown >= n_images: break
+    plt.tight_layout()
+    plt.show()
+
+inspeccion_visual(test_loader, modelo, cols_patologias_activas, device)
+
+### CELDA 54 ###
+def plot_confusion_matrices(y_true, y_pred, labels):
+    mcm = multilabel_confusion_matrix(y_true, y_pred)
+    n_labels = len(labels)
+    cols = 3
+    rows = (n_labels + cols - 1) // cols
+    
+    fig, axes = plt.subplots(rows, cols, figsize=(15, rows * 4))
+    axes = axes.ravel()
+    
+    for i in range(n_labels):
+        sns.heatmap(mcm[i], annot=True, fmt='d', cmap='Blues', ax=axes[i], cbar=False)
+        axes[i].set_title(f'Matriz: {labels[i]}')
+        axes[i].set_xlabel('Predicción')
+        axes[i].set_ylabel('Realidad')
+        axes[i].set_xticklabels(['Neg', 'Pos'])
+        axes[i].set_yticklabels(['Neg', 'Pos'])
+
+    # Ocultar ejes vacíos
+    for j in range(i + 1, len(axes)):
+        axes[j].axis('off')
+        
+    plt.tight_layout()
+    plt.show()
+
+plot_confusion_matrices(y_true_test, y_pred_test, cols_patologias_activas)
+
+### CELDA 55 ###
+def matriz_resumen_multietiqueta(y_true, y_pred, classes):
+    mcm = multilabel_confusion_matrix(y_true, y_pred)
+    
+    # Lista para almacenar los datos calculados
+    datos_resumen = []
+    
+    for i in range(len(classes)):
+        # Extraemos los valores de la matriz 2x2 de esta patología
+        tn, fp, fn, tp = mcm[i].ravel()
+        
+        # Calculamos las tasas (porcentajes)
+        sensibilidad = tp / (tp + fn) if (tp + fn) > 0 else 0  # Verdaderos Positivos (Recall)
+        tasa_omision = fn / (tp + fn) if (tp + fn) > 0 else 0  # Falsos Negativos
+        especificidad = tn / (tn + fp) if (tn + fp) > 0 else 0 # Verdaderos Negativos
+        falsa_alarma = fp / (tn + fp) if (tn + fp) > 0 else 0  # Falsos Positivos
+        
+        # Guardamos la fila para esta patología
+        datos_resumen.append([sensibilidad, tasa_omision, especificidad, falsa_alarma])
+        
+    datos_resumen = np.array(datos_resumen)
+    
+    # Nombres de las columnas para el gráfico
+    columnas = [
+        'Sensibilidad\n(Detecta al enfermo)', 
+        'Tasa Omisión\n(Falso Negativo)', 
+        'Especificidad\n(Descarta al sano)', 
+        'Falsa Alarma\n(Falso Positivo)'
+    ]
+    
+    # Dibujamos el Heatmap
+    plt.figure(figsize=(10, len(classes) * 0.8)) # Se ajusta dinámicamente al número de patologías
+    
+    # Usamos un mapa de colores donde Rojo = Malo/Peligro (Omisiones/Falsas alarmas) y Azul = Bueno
+    # Para hacerlo visual, invertimos el color de los errores para que resalten
+    ax = sns.heatmap(datos_resumen, annot=True, fmt='.1%', cmap='Blues', 
+                     xticklabels=columnas, yticklabels=classes, cbar=False,
+                     linewidths=1, linecolor='white')
+    
+    # Resaltar las columnas de error en tonos rojizos para fácil lectura
+    for i in range(datos_resumen.shape[0]):
+        for j in [1, 3]: # Índices de las columnas de error (Omisión y Falsa Alarma)
+            if datos_resumen[i, j] > 0.2: # Si el error supera el 20%, pintarlo más fuerte
+                ax.add_patch(plt.Rectangle((j, i), 1, 1, fill=True, color='red', alpha=0.2))
+
+    plt.title('Matriz Resumen de Rendimiento Clínico por Patología', fontsize=14, fontweight='bold', pad=20)
+    plt.xticks(fontsize=11)
+    plt.yticks(fontsize=11, rotation=0)
+    plt.tight_layout()
+    plt.show()
+
+# Ejecutamos la función
+matriz_resumen_multietiqueta(y_true_test, y_pred_test, cols_patologias_activas)
+
+### CELDA 57 ###
+modelo.eval()
+tiempos = []
+
+print("Calculando latencia de inferencia...")
+with torch.no_grad():
+    # Calentamiento (Warm-up)
+    for i, (img, _) in enumerate(test_loader):
+        if i > 5: break
+        _ = modelo(img.to(device))
+
+    # Medición real
+    for i, (img, _) in enumerate(test_loader):
+        if i > 20: break # Medimos sobre 20 batches
+        start = time.time()
+        _ = modelo(img.to(device))
+        end = time.time()
+        tiempos.append((end - start) / img.size(0))
+
+ms_promedio = np.mean(tiempos) * 1000
+print(f"Latencia media por imagen: {ms_promedio:.2f} ms")
+
+### CELDA 59 ###
+def generar_auditoria_total(loader, model, classes, device):
+    model.eval()
+    
+    # Configuramos Grad-CAM apuntando a la última capa de extracción de DenseNet
+    target_layers = [model.features[-1]] 
+    cam = GradCAM(model=model, target_layers=target_layers)
+    
+    # Diccionario para almacenar un ejemplo de cada tipo
+    ejemplos = {cls: {'TP': None, 'FP': None, 'FN': None} for cls in classes}
+
+    print("Buscando pacientes representativos en el Test Set para Auditoría Visual...")
+    with torch.no_grad():
+        for images, labels in loader:
+            imgs_dev = images.to(device)
+            outputs = model(imgs_dev)
+            probs = torch.sigmoid(outputs).cpu().numpy()
+            reales = labels.numpy()
+            preds = (probs > 0.5).astype(float)
+
+            for idx_cls, cls_name in enumerate(classes):
+                for i in range(len(images)):
+                    # Caso Acierto (TP)
+                    if preds[i, idx_cls] == 1 and reales[i, idx_cls] == 1 and ejemplos[cls_name]['TP'] is None:
+                        ejemplos[cls_name]['TP'] = (images[i], probs[i, idx_cls])
+                    # Caso Falsa Alarma (FP)
+                    if preds[i, idx_cls] == 1 and reales[i, idx_cls] == 0 and ejemplos[cls_name]['FP'] is None:
+                        ejemplos[cls_name]['FP'] = (images[i], probs[i, idx_cls])
+                    # Caso Omisión (FN)
+                    if preds[i, idx_cls] == 0 and reales[i, idx_cls] == 1 and ejemplos[cls_name]['FN'] is None:
+                        ejemplos[cls_name]['FN'] = (images[i], probs[i, idx_cls])
+
+            # Si ya tenemos todos los ejemplos, paramos para ahorrar tiempo
+            if all(all(v is not None for v in p.values()) for p in ejemplos.values()): break
+
+    # Visualización
+    for cls_name in classes:
+        display(Markdown(f"### Análisis de Explicabilidad (Grad-CAM): `{cls_name}`"))
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        
+        # Título principal para el bloque de las 3 imágenes
+        fig.suptitle(f"Evaluación Radiológica: {cls_name.upper()}", fontsize=18, fontweight='bold', y=1.05)
+        
+        tipos = [('TP', 'ACIERTO (Verdadero Positivo)'), ('FP', 'FALSA ALARMA (Falso Positivo)'), ('FN', 'OMISIÓN (Falso Negativo)')]
+        
+        for idx, (key, label) in enumerate(tipos):
+            if ejemplos[cls_name][key] is not None:
+                img_t, conf = ejemplos[cls_name][key]
+                
+                # La imagen original necesita volver al rango [0, 1] para la fusión visual
+                img_np = img_t.permute(1, 2, 0).cpu().numpy()
+                img_np = (img_np - img_np.min()) / (img_np.max() - img_np.min())
+                
+                # Preparamos el tensor para el modelo (añadimos dimensión batch)
+                input_tensor = img_t.unsqueeze(0).to(device)
+                target_idx = cols_patologias_activas.index(cls_name)
+                
+                # Generamos el mapa de calor
+                grayscale_cam = cam(input_tensor=input_tensor, targets=[ClassifierOutputTarget(target_idx)])[0, :]
+                vis = show_cam_on_image(img_np, grayscale_cam, use_rgb=True)
+                
+                axes[idx].imshow(vis)
+                # Título individual con el nombre de la patología explícito
+                axes[idx].set_title(f"[{cls_name}]\n{label}\nConfianza de la Red: {conf:.1%}", fontweight='bold', fontsize=12)
+            else:
+                axes[idx].text(0.5, 0.5, f"No hay ejemplos de {key}\npara {cls_name} en Test", ha='center', va='center', fontsize=12)
+            axes[idx].axis('off')
+        
+        plt.tight_layout()
+        plt.show()
+
+# Ejecución de la auditoría completa
+generar_auditoria_total(test_loader, modelo, cols_patologias_activas, device)
+
