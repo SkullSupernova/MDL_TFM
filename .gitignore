@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Distribución / packaging
+*.egg-info/
+dist/
+build/
+
+# Artefactos de modelo (binarios no versionables por tamaño)
+*.pth
+*.pt
+*.pkl
+*.ckpt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+logs/
+*.log
+
+# Variables de entorno
+.env
+.env.local
+
+# Weights & Biases
+wandb/
+
+# Datos pesados (no versionar, solo la estructura de directorios)
+data/chexpert/csv/
+data/chexpert/samples/
+data/chexpert/processed/
+
+# IDEs
+.vscode/
+.idea/
+
+# Pytest y cobertura
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
