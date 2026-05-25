@@ -1,0 +1,47 @@
+
+MLOps_PracticaFinal/
+│
+├── .github/
+│   └── workflows/
+│       └── ci.yml                  # Tests automáticos + linting en cada push/PR
+│
+├── config/
+│   └── config.yml                  # Parámetros centralizados (sin secretos)
+│
+├── data/
+│   └── KMNIST/
+│       └── raw/                    # Datos originales (excluidos de git)
+│
+├── logs/                           # Generado en ejecución (excluido de git)
+│
+├── models/                         # Checkpoints .pth (excluidos de git)
+│
+├── notebook/                       # Solo para exploración; no se importan en producción
+│
+├── src/
+│   ├── __init__.py
+│   ├── api.py                      # API FastAPI (renombrado desde api_inferencia.py)
+│   ├── logging_config.py           # Sin cambios funcionales
+│   ├── main.py                     # Punto de entrada CLI
+│   ├── model.py                    # CNN_ResNet + ResidualBlock (extraído de utils.py)
+│   ├── train.py                    # Pipeline de entrenamiento
+│   └── utils.py                    # Solo utilidades: datos, métricas, visualización
+│
+├── test/
+│   ├── __init__.py
+│   ├── conftest.py                 # Fixtures compartidas
+│   ├── test_api.py                 # Tests de endpoints FastAPI
+│   ├── test_model.py               # Tests de arquitectura y forward pass
+│   └── test_utils.py               # Tests de utilidades de datos
+│
+├── wandb/                          # Artefactos W&B (excluidos de git salvo config)
+│
+├── .dockerignore
+├── .env.example                    # Plantilla de variables de entorno (sin secretos reales)
+├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml                  # Metadatos del paquete y configuración de herramientas
+├── requirements.txt                # Dependencias de producción (con versiones válidas)
+├── requirements-dev.txt            # Dependencias de desarrollo y notebooks
+└── README.md
