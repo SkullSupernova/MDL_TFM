@@ -1,0 +1,16 @@
+.venv/
+.git/
+.github/
+.pytest_cache/
+.claude/
+__pycache__/
+*.pyc
+*.pyo
+notebook/
+chexpert_csv/
+data/
+wandb/
+muestras_busqueda/
+models/
+test/
+requirements-dev.txt
