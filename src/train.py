@@ -7,6 +7,9 @@ import torch
 from torch import amp
 
 from src.utils import EarlyStopping, ModelCheckpoint, calculate_metrics
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def train_model(
@@ -57,17 +60,20 @@ def train_model(
     """
     early_stopping = EarlyStopping(patience=6)
     model_checkpoint = ModelCheckpoint()
-    scaler = amp.GradScaler('cuda')
+
+    # AMP solo disponible en CUDA; en CPU se usa autocast con device_type='cpu'
+    device_type = device.type
+    scaler = amp.GradScaler(device_type) if device_type == 'cuda' else None
 
     history = {'train_loss': [], 'val_loss': [], 'val_acc': [], 'val_f1': []}
 
     model = model.to(device)
-    print(f"=== INICIO DE ENTRENAMIENTO EN: {str(device).upper()} ===")
+    logger.info(f"Inicio de entrenamiento en: {str(device).upper()}")
     start_time = time.time()
 
     for epoch in range(num_epochs):
         current_lr = optimizer.param_groups[0]['lr']
-        print(f"\n--- ÉPOCA {epoch + 1}/{num_epochs} | LR Actual: {current_lr:.6f} ---")
+        logger.info(f"Época {epoch + 1}/{num_epochs} | LR: {current_lr:.6f}")
 
         # =================== FASE DE ENTRENAMIENTO ===================
         model.train()
@@ -78,18 +84,22 @@ def train_model(
 
             optimizer.zero_grad()
 
-            with amp.autocast('cuda'):
+            with amp.autocast(device_type):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             running_loss += loss.item()
 
             if (i + 1) % 100 == 0 or (i + 1) == len(train_loader):
-                print(f"   [Progreso] Lote {i + 1:04d}/{len(train_loader)} | Loss actual: {loss.item():.4f}")
+                logger.info(f"  [Batch {i + 1:04d}/{len(train_loader)}] Loss: {loss.item():.4f}")
 
         epoch_train_loss = running_loss / len(train_loader)
         history['train_loss'].append(epoch_train_loss)
@@ -103,7 +113,7 @@ def train_model(
             for images, labels in val_loader:
                 images, labels = images.to(device), labels.to(device)
 
-                with amp.autocast('cuda'):
+                with amp.autocast(device_type):
                     outputs = model(images)
                     loss = criterion(outputs, labels)
 
@@ -125,25 +135,27 @@ def train_model(
         scheduler.step(val_epoch_loss)
 
         # =================== CONTROL (CALLBACKS) ===================
-        print(f"\n   >> RESULTADOS ÉPOCA {epoch + 1}:")
-        print(f"      Train Loss: {epoch_train_loss:.4f} | Val Loss: {val_epoch_loss:.4f}")
-        print(f"      Val Acc:    {metrics['accuracy']:.4f} | Val F1:   {metrics['f1_macro']:.4f}")
+        logger.info(
+            f"Época {epoch + 1} — Train Loss: {epoch_train_loss:.4f} | "
+            f"Val Loss: {val_epoch_loss:.4f} | "
+            f"Val Acc: {metrics['accuracy']:.4f} | Val F1: {metrics['f1_macro']:.4f}"
+        )
 
         saved = model_checkpoint(model, metrics['f1_macro'])
         if saved:
-            print(f"      ¡NUEVO MEJOR MODELO! F1-Score subió a {metrics['f1_macro']:.4f}.")
+            logger.info(f"  Nuevo mejor modelo — F1: {metrics['f1_macro']:.4f}")
 
         early_stopping(val_epoch_loss)
         if early_stopping.early_stop:
-            print(f"\nEarly Stopping activado en la época {epoch + 1}. El modelo ha dejado de mejorar.")
+            logger.warning(f"Early Stopping activado en época {epoch + 1}.")
             break
 
     total_time = (time.time() - start_time) / 60
-    print(f"\n=== ENTRENAMIENTO FINALIZADO EN {total_time:.2f} MINUTOS ===")
+    logger.info(f"Entrenamiento finalizado en {total_time:.2f} minutos.")
 
     if model_checkpoint.best_model_state:
         model.load_state_dict(model_checkpoint.best_model_state)
         torch.save(model.state_dict(), save_path)
-        print(f"Pesos restaurados al punto de mayor F1-Score y guardados en: {save_path}")
+        logger.info(f"Pesos restaurados al mejor F1 y guardados en: {save_path}")
 
     return history, model
