@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias del sistema
+        run: sudo apt-get install -y libgl1
+
+      - name: Instalar PyTorch CPU
+        run: pip install torch==2.12.0 torchvision==0.27.0 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Instalar dependencias del proyecto
+        run: |
+          grep -vE "^(torch|torchvision)==" requirements.txt > /tmp/req-ci.txt
+          pip install -r /tmp/req-ci.txt
+
+      - name: Ejecutar tests
+        run: pytest test/ -v --tb=short
