@@ -3,7 +3,9 @@ from typing import List, Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset
+from torchvision import models as tv_models
 from PIL import Image
 
 
@@ -12,15 +14,10 @@ from PIL import Image
 # =========================================================
 
 CHEXPERT_PATHOLOGY_COLS: List[str] = [
-    'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity', 'Lung Lesion',
-    'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis', 'Pneumothorax',
-    'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices', 'No Finding'
+    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity',
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis',
+    'Pneumothorax', 'Pleural Effusion', 'Fracture', 'Support Devices'
 ]
-"""
-Lista canónica de las 14 etiquetas diagnósticas del dataset CheXpert.
-Se utiliza como valor por defecto en CheXpertDataset cuando no se especifican
-columnas de etiquetas explícitamente.
-"""
 
 
 # =========================================================
@@ -79,3 +76,65 @@ class CheXpertDataset(Dataset):
         labels = torch.tensor(labels)
 
         return image, labels
+
+
+# =========================================================
+# Builder genérico de modelos
+# =========================================================
+
+SUPPORTED_MODELS = ("densenet121", "resnet50", "efficientnet_b0", "efficientnet_b4")
+
+
+def _classifier_head(
+    in_features: int, hidden_units: int, dropout: float, num_classes: int
+) -> nn.Module:
+    return nn.Sequential(
+        nn.Linear(in_features, hidden_units),
+        nn.ReLU(),
+        nn.Dropout(dropout),
+        nn.Linear(hidden_units, num_classes),
+    )
+
+
+def build_model(
+    model_name: str = "densenet121",
+    num_classes: int = 13,
+    dropout: float = 0.5,
+    hidden_units: int = 1024,
+    pretrained: bool = True,
+) -> nn.Module:
+    """Generic multilabel classifier builder.
+    Supported backbones: densenet121, resnet50, efficientnet_b0, efficientnet_b4."""
+    if model_name not in SUPPORTED_MODELS:
+        raise ValueError(f"'{model_name}' no soportado. Elige entre {SUPPORTED_MODELS}")
+
+    weights = "DEFAULT" if pretrained else None
+
+    if model_name == "densenet121":
+        base = tv_models.densenet121(weights=weights)
+        base.classifier = _classifier_head(
+            base.classifier.in_features, hidden_units, dropout, num_classes
+        )
+    elif model_name == "resnet50":
+        base = tv_models.resnet50(weights=weights)
+        base.fc = _classifier_head(
+            base.fc.in_features, hidden_units, dropout, num_classes
+        )
+    elif model_name.startswith("efficientnet"):
+        base = getattr(tv_models, model_name)(weights=weights)
+        base.classifier[-1] = _classifier_head(
+            base.classifier[-1].in_features, hidden_units, dropout, num_classes
+        )
+
+    return base
+
+
+def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
+    """Devuelve la capa target de GradCAM para cada backbone soportado."""
+    if model_name == "densenet121":
+        return [model.features[-1]]
+    if model_name == "resnet50":
+        return [model.layer4[-1]]
+    if model_name.startswith("efficientnet"):
+        return [model.features[-1]]
+    raise ValueError(f"No hay capa GradCAM definida para '{model_name}'")
