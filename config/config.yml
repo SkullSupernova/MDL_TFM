@@ -1,0 +1,43 @@
+data:
+  csv_path: "chexpert_csv/train_cheXbert.csv"
+  images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408"
+  batches:
+    - "CheXpert-v1.0 batch 2"
+    - "CheXpert-v1.0 batch 3"
+    - "CheXpert-v1.0 batch 4"
+  img_size: 224
+  train_split: 0.9
+
+model:
+  name: "densenet121"          # soportados: densenet121, resnet50, efficientnet_b0, efficientnet_b4
+  num_classes: 13
+  dropout: 0.5
+  hidden_units: 1024
+  pretrained: true
+  checkpoint_path: "models/mejor_modelo_densenet121.pth"
+
+training:
+  batch_size: 64
+  inference_batch_size: 256
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  epochs: 50
+  early_stopping_patience: 6
+  scheduler_patience: 2
+  threshold: 0.5
+  seed: 42
+
+pathologies:
+  - "No Finding"
+  - "Enlarged Cardiomediastinum"
+  - "Cardiomegaly"
+  - "Lung Opacity"
+  - "Lung Lesion"
+  - "Edema"
+  - "Consolidation"
+  - "Pneumonia"
+  - "Atelectasis"
+  - "Pneumothorax"
+  - "Pleural Effusion"
+  - "Fracture"
+  - "Support Devices"
