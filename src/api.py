@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from torchvision import transforms
 
-from src.models import CHEXPERT_PATHOLOGY_COLS, build_model
+from src.models import CHEXPERT_PATHOLOGY_COLS, load_checkpoint
 
 _CONFIG_PATH = "config/config.yml"
 
@@ -36,18 +36,7 @@ def _load_model(cfg: dict) -> torch.nn.Module:
             f"Checkpoint no encontrado: '{checkpoint}'. "
             "Entrena el modelo primero o actualiza 'model.checkpoint_path' en config.yml."
         )
-    model = build_model(
-        model_name=cfg["model"]["name"],
-        num_classes=cfg["model"]["num_classes"],
-        dropout=cfg["model"]["dropout"],
-        hidden_units=cfg["model"]["hidden_units"],
-        pretrained=False,
-    )
-    state = torch.load(checkpoint, map_location=_device, weights_only=True)
-    model.load_state_dict(state)
-    model.to(_device)
-    model.eval()
-    return model
+    return load_checkpoint(cfg, checkpoint, _device)
 
 
 @asynccontextmanager

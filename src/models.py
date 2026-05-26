@@ -129,6 +129,61 @@ def build_model(
     return base
 
 
+def _has_simple_head(state: dict, model_name: str) -> bool:
+    """Return True if the checkpoint uses a plain nn.Linear output head."""
+    if model_name == "densenet121":
+        return "classifier.weight" in state and "classifier.0.weight" not in state
+    if model_name == "resnet50":
+        return "fc.weight" in state and "fc.0.weight" not in state
+    if model_name.startswith("efficientnet"):
+        return "classifier.1.weight" in state and "classifier.1.0.weight" not in state
+    return False
+
+
+def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
+    """Build backbone + single nn.Linear — matches checkpoints trained without _classifier_head."""
+    if model_name == "densenet121":
+        base = tv_models.densenet121(weights=None)
+        base.classifier = nn.Linear(base.classifier.in_features, num_classes)
+    elif model_name == "resnet50":
+        base = tv_models.resnet50(weights=None)
+        base.fc = nn.Linear(base.fc.in_features, num_classes)
+    elif model_name.startswith("efficientnet"):
+        base = getattr(tv_models, model_name)(weights=None)
+        base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
+    else:
+        raise ValueError(f"'{model_name}' no soportado")
+    return base
+
+
+def load_checkpoint(cfg: dict, checkpoint_path: str, device: torch.device) -> nn.Module:
+    """Load a checkpoint into the correct architecture and return an eval-mode model.
+
+    Detects automatically whether the checkpoint was saved with a plain
+    nn.Linear head (original notebook training) or with _classifier_head
+    (build_model), and builds the matching architecture.
+    """
+    state = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    model_name = cfg["model"]["name"]
+    num_classes = cfg["model"]["num_classes"]
+
+    if _has_simple_head(state, model_name):
+        model = _build_simple_head_model(model_name, num_classes)
+    else:
+        model = build_model(
+            model_name=model_name,
+            num_classes=num_classes,
+            dropout=cfg["model"]["dropout"],
+            hidden_units=cfg["model"]["hidden_units"],
+            pretrained=False,
+        )
+
+    model.load_state_dict(state)
+    model.to(device)
+    model.eval()
+    return model
+
+
 def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
     """Devuelve la capa target de GradCAM para cada backbone soportado."""
     if model_name == "densenet121":

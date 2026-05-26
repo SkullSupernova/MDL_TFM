@@ -1,4 +1,9 @@
+import sys
 from pathlib import Path
+
+# Streamlit adds src/ to sys.path when running this file directly;
+# insert the project root so that 'from src.x import' resolves correctly.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -11,7 +16,7 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from torchvision import transforms
 
-from src.models import CHEXPERT_PATHOLOGY_COLS, build_model, get_grad_cam_layer
+from src.models import CHEXPERT_PATHOLOGY_COLS, get_grad_cam_layer, load_checkpoint
 
 _EVAL_TRANSFORM = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -34,18 +39,7 @@ def _load_model():
         st.stop()
 
     device = torch.device("cpu")
-    model = build_model(
-        model_name=cfg["model"]["name"],
-        num_classes=cfg["model"]["num_classes"],
-        dropout=cfg["model"]["dropout"],
-        hidden_units=cfg["model"]["hidden_units"],
-        pretrained=False,
-    )
-    state = torch.load(checkpoint, map_location=device, weights_only=True)
-    model.load_state_dict(state)
-    model.to(device)
-    model.eval()
-
+    model = load_checkpoint(cfg, checkpoint, device)
     target_layers = get_grad_cam_layer(model, cfg["model"]["name"])
     return cfg, model, target_layers, device
 
