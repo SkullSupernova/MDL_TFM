@@ -68,6 +68,7 @@ six==1.17.0
 smmap==5.0.3
 stack-data==0.6.3
 starlette==1.1.0
+streamlit==1.57.0
 sympy==1.14.0
 threadpoolctl==3.6.0
 torch==2.12.0
