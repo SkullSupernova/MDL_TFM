@@ -371,7 +371,11 @@ def aplicar_filtrado_proyecto(df_ini: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[
 def auditar_dataset(df: pd.DataFrame, columnas_auditar: Optional[List[str]] = None) -> None:
     """
     Genera un reporte de auditoría en formato Markdown mostrando el total de
-    muestras y la distribución de valores por columna. Requiere entorno Jupyter.
+    muestras y la distribución de valores por columna.
+
+    Nota: esta función usa IPython.display y solo produce salida visible dentro
+    de un entorno Jupyter Notebook o JupyterLab. En un script CLI no produce
+    ninguna salida.
     """
     total_filas = len(df)
 

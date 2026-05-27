@@ -1,3 +1,15 @@
+"""
+Pipeline CLI de entrenamiento para clasificación multietiqueta de patologías torácicas.
+
+Punto de entrada principal del proyecto. Orquesta la carga de configuración,
+el preprocesado ETL del dataset CheXpert, el split por paciente para evitar
+data leakage, la construcción del modelo y el bucle de entrenamiento.
+
+Uso:
+    python -m src.main
+    python -m src.main --model resnet50 --epochs 5 --subset 1000
+"""
+
 import yaml
 import numpy as np
 import pandas as pd
@@ -18,12 +30,20 @@ from src.visualization import graficar_entrenamiento
 
 
 def load_config(path: str = "config/config.yml") -> dict:
+    """Carga y devuelve el archivo de configuración YAML del proyecto."""
     with open(path, "r") as f:
         return yaml.safe_load(f)
 
 
 def _patient_split(df: pd.DataFrame, train_ratio: float, seed: int):
-    """Split por paciente único para evitar data leakage entre train y validación."""
+    """
+    Divide el dataset en train/validación a nivel de paciente.
+
+    Garantiza que todas las imágenes de un mismo paciente pertenezcan
+    exclusivamente a un subconjunto, evitando data leakage.
+
+    Devuelve dos listas de índices de filas del DataFrame.
+    """
     rng = np.random.default_rng(seed)
     pacientes = df["Patient"].unique()
     rng.shuffle(pacientes)

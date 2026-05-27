@@ -1,3 +1,13 @@
+"""
+Aplicación web interactiva para clasificación multietiqueta de patologías torácicas.
+
+Interfaz Streamlit que permite cargar una radiografía, seleccionar el modelo activo,
+visualizar las probabilidades por patología con GradCAM y exportar los resultados.
+
+Uso:
+    streamlit run src/app.py
+"""
+
 import sys
 from pathlib import Path
 

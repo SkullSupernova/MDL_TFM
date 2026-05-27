@@ -147,7 +147,14 @@ def build_model(
 
 
 def _has_simple_head(state: dict, model_name: str) -> bool:
-    """Return True if the checkpoint uses a plain nn.Linear output head."""
+    """
+    Determina si el checkpoint usa una cabeza de salida simple (nn.Linear directo).
+
+    Los checkpoints entrenados desde el notebook original usan nn.Linear sin
+    capas intermedias. Los entrenados con build_model() usan _classifier_head
+    (4 capas: Linear-ReLU-Dropout-Linear). La distinción se hace inspeccionando
+    las claves del state_dict sin cargar el modelo.
+    """
     if model_name == "densenet121":
         return "classifier.weight" in state and "classifier.0.weight" not in state
     if model_name == "resnet50":
@@ -158,7 +165,12 @@ def _has_simple_head(state: dict, model_name: str) -> bool:
 
 
 def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
-    """Build backbone + single nn.Linear — matches checkpoints trained without _classifier_head."""
+    """
+    Construye el backbone con una cabeza de salida simple (nn.Linear).
+
+    Se usa cuando el checkpoint detectado proviene del notebook original,
+    que no usa _classifier_head sino un único Linear como capa de salida.
+    """
     if model_name == "densenet121":
         base = tv_models.densenet121(weights=None)
         base.classifier = nn.Linear(base.classifier.in_features, num_classes)
@@ -174,8 +186,16 @@ def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
 
 
 def _infer_num_classes(state: dict, model_name: str) -> int:
-    """Infer num_classes from the output layer weight shape in the state dict."""
-    # Try complex head (_classifier_head index 3) first, then simple head.
+    """
+    Infiere num_classes leyendo la forma del tensor de pesos de la capa de salida.
+
+    Se prueban primero las claves de _classifier_head (índice 3) y luego las de
+    la cabeza simple, para que el mismo código sirva con ambos formatos de checkpoint.
+
+    Raises:
+        ValueError: si no se encuentra ninguna clave reconocida en el state_dict.
+    """
+    # Cabeza compleja (_classifier_head, índice 3) tiene prioridad sobre cabeza simple.
     candidates: dict[str, list[str]] = {
         "densenet121": ["classifier.3.weight", "classifier.weight"],
         "resnet50":    ["fc.3.weight",          "fc.weight"],
@@ -194,11 +214,18 @@ def _infer_num_classes(state: dict, model_name: str) -> int:
 def load_checkpoint(
     cfg: dict, checkpoint_path: str, device: torch.device
 ) -> tuple[nn.Module, int]:
-    """Load a checkpoint into the correct architecture and return (model, num_classes).
+    """
+    Carga un checkpoint en la arquitectura correcta y devuelve (model, num_classes).
 
-    Infers num_classes from the checkpoint weight shape and detects whether the
-    checkpoint was saved with a plain nn.Linear head (notebook training) or with
-    _classifier_head (build_model).
+    Infiere num_classes del shape de los pesos del checkpoint, e identifica
+    automáticamente si se usó cabeza simple (nn.Linear) o cabeza compuesta
+    (_classifier_head de build_model). Compatible con checkpoints del notebook
+    original (14 clases, cabeza simple) y con los generados por main.py (13 clases,
+    cabeza compuesta).
+
+    Raises:
+        FileNotFoundError: si el checkpoint no existe en la ruta indicada.
+        RuntimeError: si el state_dict no es compatible con la arquitectura inferida.
     """
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model_name = cfg["model"]["name"]
@@ -222,7 +249,17 @@ def load_checkpoint(
 
 
 def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
-    """Devuelve la capa target de GradCAM para cada backbone soportado."""
+    """
+    Devuelve la lista con la capa convolucional target para GradCAM.
+
+    La capa elegida es la última del bloque de características de cada backbone:
+    DenseNet-121 → features[-1] (DenseBlock + BatchNorm final),
+    ResNet-50    → layer4[-1] (último bloque residual),
+    EfficientNet → features[-1] (último bloque MBConv).
+
+    Raises:
+        ValueError: si model_name no está entre los backbones soportados.
+    """
     if model_name == "densenet121":
         return [model.features[-1]]
     if model_name == "resnet50":

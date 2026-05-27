@@ -1,3 +1,15 @@
+"""
+API REST de inferencia para clasificación multietiqueta de patologías torácicas.
+
+Expone dos endpoints:
+- GET  /health  — verificación de estado del servicio.
+- POST /predict — inferencia sobre una imagen de radiografía (JPEG/PNG).
+
+El modelo se carga una sola vez al arrancar el servidor mediante el contexto
+de ciclo de vida (lifespan). La ruta del checkpoint y el backbone se leen de
+config/config.yml.
+"""
+
 from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
@@ -60,6 +72,11 @@ app = FastAPI(
 
 @app.get("/health")
 def health() -> Dict[str, str]:
+    """
+    Verifica que el servicio está activo.
+
+    Respuesta: {"status": "ok"}
+    """
     return {"status": "ok"}
 
 
@@ -73,6 +90,24 @@ async def predict(
         description="Umbral de clasificación (0–1). Por defecto usa el valor de config.yml.",
     ),
 ) -> JSONResponse:
+    """
+    Realiza inferencia multietiqueta sobre una radiografía torácica.
+
+    Parámetros:
+        file      — Imagen en formato JPEG o PNG (multipart/form-data).
+        threshold — Umbral de decisión (0.0–1.0). Si se omite, usa training.threshold de config.yml.
+
+    Respuesta exitosa (200):
+        {
+          "threshold": 0.5,
+          "probabilities": {"No Finding": 0.12, "Edema": 0.87, ...},
+          "detected_pathologies": ["Edema"]
+        }
+
+    Errores:
+        422 — Tipo de archivo no soportado o imagen corrupta.
+        503 — Modelo no disponible (fallo al cargar en el arranque).
+    """
     if _model is None:
         raise HTTPException(status_code=503, detail="Modelo no disponible.")
 
