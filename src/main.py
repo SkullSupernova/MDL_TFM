@@ -10,6 +10,7 @@ Uso:
     python -m src.main --model resnet50 --epochs 5 --subset 1000
 """
 
+import argparse
 import yaml
 import numpy as np
 import pandas as pd
@@ -35,6 +36,36 @@ def load_config(path: str = "config/config.yml") -> dict:
         return yaml.safe_load(f)
 
 
+def _parse_args() -> argparse.Namespace:
+    """
+    Parsea los argumentos de línea de comandos.
+
+    Los argumentos opcionales sobreescriben los valores de config.yml en tiempo
+    de ejecución sin modificar el fichero de configuración.
+    """
+    parser = argparse.ArgumentParser(
+        description="Pipeline de entrenamiento CheXpert"
+    )
+    parser.add_argument(
+        "--config", default="config/config.yml",
+        help="Ruta al archivo de configuración YAML (por defecto: config/config.yml)"
+    )
+    parser.add_argument(
+        "--model", default=None,
+        help="Nombre del backbone a usar. Sobreescribe model.name de config.yml."
+             " Soportados: densenet121, resnet50, efficientnet_b0, efficientnet_b4"
+    )
+    parser.add_argument(
+        "--epochs", type=int, default=None,
+        help="Número máximo de épocas. Sobreescribe training.epochs de config.yml."
+    )
+    parser.add_argument(
+        "--subset", type=int, default=None,
+        help="Limitar el conjunto de entrenamiento a N imágenes. Útil para validación rápida."
+    )
+    return parser.parse_args()
+
+
 def _patient_split(df: pd.DataFrame, train_ratio: float, seed: int):
     """
     Divide el dataset en train/validación a nivel de paciente.
@@ -55,7 +86,15 @@ def _patient_split(df: pd.DataFrame, train_ratio: float, seed: int):
 
 
 def main():
-    cfg = load_config()
+    args = _parse_args()
+    cfg = load_config(args.config)
+
+    # Aplicar sobreescrituras desde CLI
+    if args.model:
+        cfg["model"]["name"] = args.model
+    if args.epochs:
+        cfg["training"]["epochs"] = args.epochs
+
     device, num_workers = setup_environment()
     set_seed(cfg["training"]["seed"])
 
@@ -93,6 +132,11 @@ def main():
     train_idx, val_idx = _patient_split(
         df, cfg["data"]["train_split"], cfg["training"]["seed"]
     )
+
+    # Subconjunto opcional para validación rápida del pipeline
+    if args.subset:
+        train_idx = train_idx[:args.subset]
+
     train_ds = CheXpertDataset(
         df.loc[train_idx].reset_index(drop=True),
         transform=train_tf,
@@ -119,9 +163,10 @@ def main():
         pin_memory=True,
     )
 
-    # --- Modelo (backbone intercambiable via config.yml) ---
+    # --- Modelo (backbone intercambiable via config.yml o --model) ---
+    model_name = cfg["model"]["name"]
     model = build_model(
-        model_name=cfg["model"]["name"],
+        model_name=model_name,
         num_classes=cfg["model"]["num_classes"],
         dropout=cfg["model"]["dropout"],
         hidden_units=cfg["model"]["hidden_units"],
@@ -144,12 +189,16 @@ def main():
         optimizer, patience=cfg["training"]["scheduler_patience"]
     )
 
+    # El checkpoint se guarda con el nombre del backbone para no sobreescribir
+    # modelos de otras arquitecturas entrenados en la misma máquina.
+    save_path = f"models/mejor_modelo_{model_name}.pth"
+
     # --- Entrenamiento ---
     history, model = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
         num_epochs=cfg["training"]["epochs"],
         device=device,
-        save_path=cfg["model"]["checkpoint_path"],
+        save_path=save_path,
     )
     graficar_entrenamiento(history)
 
