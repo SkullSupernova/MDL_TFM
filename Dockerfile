@@ -11,5 +11,3 @@ RUN pip install --no-cache-dir torch==2.12.0 torchvision==0.27.0 --index-url htt
 
 COPY src/ src/
 COPY config/ config/
-
-CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
