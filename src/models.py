@@ -19,6 +19,23 @@ CHEXPERT_PATHOLOGY_COLS: List[str] = [
     'Pneumothorax', 'Pleural Effusion', 'Fracture', 'Support Devices'
 ]
 
+# Lista completa de 14 patologías (incluye 'Pleural Other') — orden estándar CheXpert.
+# Los checkpoints entrenados directamente desde el notebook usan 14 salidas.
+CHEXPERT_PATHOLOGY_COLS_14: List[str] = [
+    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity',
+    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis',
+    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
+]
+
+
+def get_pathology_labels(num_classes: int) -> List[str]:
+    """Return the pathology label list matching the number of model output classes."""
+    if num_classes == 13:
+        return CHEXPERT_PATHOLOGY_COLS
+    if num_classes == 14:
+        return CHEXPERT_PATHOLOGY_COLS_14
+    raise ValueError(f"No hay lista de etiquetas definida para {num_classes} clases")
+
 
 # =========================================================
 # Dataset de PyTorch para CheXpert
@@ -156,16 +173,36 @@ def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
     return base
 
 
-def load_checkpoint(cfg: dict, checkpoint_path: str, device: torch.device) -> nn.Module:
-    """Load a checkpoint into the correct architecture and return an eval-mode model.
+def _infer_num_classes(state: dict, model_name: str) -> int:
+    """Infer num_classes from the output layer weight shape in the state dict."""
+    # Try complex head (_classifier_head index 3) first, then simple head.
+    candidates: dict[str, list[str]] = {
+        "densenet121": ["classifier.3.weight", "classifier.weight"],
+        "resnet50":    ["fc.3.weight",          "fc.weight"],
+    }
+    if model_name in candidates:
+        for key in candidates[model_name]:
+            if key in state:
+                return state[key].shape[0]
+    if model_name.startswith("efficientnet"):
+        for key in ["classifier.1.3.weight", "classifier.1.weight"]:
+            if key in state:
+                return state[key].shape[0]
+    raise ValueError(f"No se puede inferir num_classes para '{model_name}'")
 
-    Detects automatically whether the checkpoint was saved with a plain
-    nn.Linear head (original notebook training) or with _classifier_head
-    (build_model), and builds the matching architecture.
+
+def load_checkpoint(
+    cfg: dict, checkpoint_path: str, device: torch.device
+) -> tuple[nn.Module, int]:
+    """Load a checkpoint into the correct architecture and return (model, num_classes).
+
+    Infers num_classes from the checkpoint weight shape and detects whether the
+    checkpoint was saved with a plain nn.Linear head (notebook training) or with
+    _classifier_head (build_model).
     """
     state = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model_name = cfg["model"]["name"]
-    num_classes = cfg["model"]["num_classes"]
+    num_classes = _infer_num_classes(state, model_name)
 
     if _has_simple_head(state, model_name):
         model = _build_simple_head_model(model_name, num_classes)
@@ -181,7 +218,7 @@ def load_checkpoint(cfg: dict, checkpoint_path: str, device: torch.device) -> nn
     model.load_state_dict(state)
     model.to(device)
     model.eval()
-    return model
+    return model, num_classes
 
 
 def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:

@@ -16,7 +16,7 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from torchvision import transforms
 
-from src.models import CHEXPERT_PATHOLOGY_COLS, get_grad_cam_layer, load_checkpoint
+from src.models import get_grad_cam_layer, get_pathology_labels, load_checkpoint
 
 _EVAL_TRANSFORM = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -39,9 +39,10 @@ def _load_model():
         st.stop()
 
     device = torch.device("cpu")
-    model = load_checkpoint(cfg, checkpoint, device)
+    model, num_classes = load_checkpoint(cfg, checkpoint, device)
     target_layers = get_grad_cam_layer(model, cfg["model"]["name"])
-    return cfg, model, target_layers, device
+    labels = get_pathology_labels(num_classes)
+    return cfg, model, target_layers, device, labels
 
 
 def _predict(model: torch.nn.Module, tensor: torch.Tensor, device: torch.device) -> np.ndarray:
@@ -67,9 +68,9 @@ def _compute_grad_cam(
 def main() -> None:
     st.set_page_config(page_title="CheXpert Classifier", layout="wide")
     st.title("Clasificación de Patologías Torácicas")
-    st.caption("DenseNet-121 — CheXpert | Modelo multietiqueta con 13 patologías")
+    st.caption("DenseNet-121 — CheXpert | Clasificación multietiqueta de patologías torácicas")
 
-    cfg, model, target_layers, device = _load_model()
+    cfg, model, target_layers, device, labels = _load_model()
     default_threshold = float(cfg["training"]["threshold"])
 
     st.sidebar.header("Parámetros")
@@ -77,7 +78,7 @@ def main() -> None:
         "Umbral de clasificación", min_value=0.0, max_value=1.0,
         value=default_threshold, step=0.01,
     )
-    gradcam_label = st.sidebar.selectbox("Patología para GradCAM", CHEXPERT_PATHOLOGY_COLS)
+    gradcam_label = st.sidebar.selectbox("Patología para GradCAM", labels)
 
     uploaded = st.file_uploader("Cargar radiografía (JPEG o PNG)", type=["jpg", "jpeg", "png"])
 
@@ -93,7 +94,7 @@ def main() -> None:
 
     probs = _predict(model, tensor, device)
 
-    class_idx = CHEXPERT_PATHOLOGY_COLS.index(gradcam_label)
+    class_idx = labels.index(gradcam_label)
     mask = _compute_grad_cam(model, tensor, target_layers, class_idx, device)
     cam_image = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
 
@@ -107,7 +108,7 @@ def main() -> None:
 
     st.subheader("Probabilidades por patología")
     df = pd.DataFrame({
-        "Patología": CHEXPERT_PATHOLOGY_COLS,
+        "Patología": labels,
         "Probabilidad": probs,
         "Detectada": ["✓" if p >= threshold else "" for p in probs],
     })

@@ -10,12 +10,13 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from torchvision import transforms
 
-from src.models import CHEXPERT_PATHOLOGY_COLS, load_checkpoint
+from src.models import get_pathology_labels, load_checkpoint
 
 _CONFIG_PATH = "config/config.yml"
 
 _model: torch.nn.Module | None = None
 _cfg: dict = {}
+_labels: list[str] = []
 _device: torch.device = torch.device("cpu")
 _eval_transform = transforms.Compose([
     transforms.Resize((224, 224)),
@@ -29,7 +30,7 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
-def _load_model(cfg: dict) -> torch.nn.Module:
+def _load_model(cfg: dict) -> tuple[torch.nn.Module, int]:
     checkpoint = cfg["model"]["checkpoint_path"]
     if not Path(checkpoint).exists():
         raise FileNotFoundError(
@@ -41,9 +42,10 @@ def _load_model(cfg: dict) -> torch.nn.Module:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _model, _cfg
+    global _model, _cfg, _labels
     _cfg = _load_config()
-    _model = _load_model(_cfg)
+    _model, num_classes = _load_model(_cfg)
+    _labels = get_pathology_labels(num_classes)
     yield
     _model = None
 
@@ -95,7 +97,7 @@ async def predict(
     thr = threshold if threshold is not None else _cfg["training"]["threshold"]
     probabilities: Dict[str, float] = {
         label: round(prob, 4)
-        for label, prob in zip(CHEXPERT_PATHOLOGY_COLS, probs)
+        for label, prob in zip(_labels, probs)
     }
     detected: List[str] = [
         label for label, prob in probabilities.items() if prob >= thr
