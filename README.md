@@ -293,7 +293,7 @@ MDL_TFM/
 │   ├── utils.py                    # ETL del dataset, métricas y clases auxiliares
 │   └── visualization.py            # GradCAM, matrices de confusión y gráficas de entrenamiento
 │
-├── test/                           # Suite de pruebas automáticas (47 tests)
+├── test/                           # Suite de pruebas automáticas (44 tests)
 │   ├── conftest.py                 # Datos sintéticos compartidos entre tests
 │   ├── test_models.py
 │   ├── test_train.py
@@ -343,4 +343,4 @@ Los tests verifican automáticamente que el código funciona correctamente. No r
 .venv\Scripts\pytest.exe test/ -v
 ```
 
-Resultado esperado: `47 passed` en pocos segundos.
+Resultado esperado: `44 passed` en pocos segundos.
