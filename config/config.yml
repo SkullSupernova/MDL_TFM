@@ -2,9 +2,9 @@ data:
   csv_path: "chexpert_csv/train_cheXbert.csv"
   images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408"
   batches:
-    - "CheXpert-v1.0 batch 2"
-    - "CheXpert-v1.0 batch 3"
-    - "CheXpert-v1.0 batch 4"
+    - "CheXpert-v1.0 batch 2 (train 1)"
+    - "CheXpert-v1.0 batch 3 (train 2)"
+    - "CheXpert-v1.0 batch 4 (train 3)"
   img_size: 224
   train_split: 0.9
 
