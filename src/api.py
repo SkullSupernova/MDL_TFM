@@ -22,7 +22,10 @@ from fastapi.responses import JSONResponse
 from PIL import Image
 from torchvision import transforms
 
+from src.logging_config import get_logger
 from src.models import get_pathology_labels, load_checkpoint
+
+logger = get_logger(__name__)
 
 # Ruta fija al archivo de configuración.
 # Al ejecutar con uvicorn o docker, el directorio de trabajo es siempre /app (Docker)
@@ -81,13 +84,16 @@ async def lifespan(app: FastAPI):
     #      en lugar de fallar silenciosamente en la primera petición.
     global _model, _cfg, _labels
     _cfg = _load_config()
+    logger.info(f"Cargando modelo: {_cfg['model']['name']}")
     _model, num_classes = _load_model(_cfg)
     _labels = get_pathology_labels(num_classes)
+    logger.info(f"Modelo listo: {_cfg['model']['name']} — {len(_labels)} clases")
     yield
     # Al apagar: liberar la referencia al modelo para que el garbage collector
     # pueda recuperar la memoria (especialmente relevante si el servidor se
     # recarga en caliente sin reiniciar el proceso).
     _model = None
+    logger.info("Servidor detenido, modelo liberado")
 
 
 app = FastAPI(
@@ -139,16 +145,20 @@ async def predict(
     # 1. Verificar que el modelo está disponible.
     #    Puede ser None si el lifespan falló al cargar el checkpoint.
     if _model is None:
+        logger.error("Petición rechazada: modelo no disponible")
         raise HTTPException(status_code=503, detail="Modelo no disponible.")
 
     # 2. Validar el tipo de archivo antes de leerlo.
     #    Rechazamos tipos no soportados aquí (y no después de leer el contenido)
     #    para evitar transferencias innecesarias de datos grandes.
     if file.content_type not in ("image/jpeg", "image/png"):
+        logger.warning(f"Tipo de archivo no soportado: {file.content_type} ({file.filename})")
         raise HTTPException(
             status_code=422,
             detail=f"Tipo de archivo no soportado: '{file.content_type}'. Se requiere image/jpeg o image/png.",
         )
+
+    logger.info(f"Petición recibida: {file.filename} ({file.content_type})")
 
     # 3. Leer el contenido del archivo y decodificarlo como imagen.
     #    BytesIO permite tratar los bytes como un fichero en memoria sin
@@ -157,6 +167,7 @@ async def predict(
     try:
         img = Image.open(BytesIO(contents)).convert("RGB")
     except Exception:
+        logger.warning(f"No se pudo decodificar la imagen: {file.filename}")
         raise HTTPException(status_code=422, detail="No se pudo decodificar la imagen.")
 
     # 4. Preprocesar la imagen y añadir la dimensión de batch.
@@ -185,6 +196,11 @@ async def predict(
     detected: List[str] = [
         label for label, prob in probabilities.items() if prob >= thr
     ]
+
+    logger.info(
+        f"Resultado: {len(detected)}/{len(_labels)} patologías detectadas "
+        f"(umbral={thr:.2f}, archivo={file.filename})"
+    )
 
     return JSONResponse(content={
         "threshold": thr,

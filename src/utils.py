@@ -18,6 +18,10 @@ import torch
 from sklearn.metrics import accuracy_score, f1_score
 from IPython.display import display, Markdown
 
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 # =========================================================
 # Configuración del entorno
@@ -28,21 +32,21 @@ def setup_environment() -> Tuple[torch.device, int]:
     Configura el dispositivo de cómputo y los parámetros del DataLoader.
     Las decisiones priorizan estabilidad sobre paralelización agresiva en Windows.
     """
-    print("\n=== Detección de Hardware ===")
+    logger.info("=== Detección de Hardware ===")
 
     cpu_cores = os.cpu_count()
     if cpu_cores is not None:
-        print(f"Núcleos lógicos CPU  : {cpu_cores}")
+        logger.info(f"Núcleos lógicos CPU  : {cpu_cores}")
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
         gpu_name = torch.cuda.get_device_name(0)
         vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        print(f"Dispositivo          : GPU ({gpu_name})")
-        print(f"VRAM Disponible      : {vram_gb:.2f} GB")
+        logger.info(f"Dispositivo          : GPU ({gpu_name})")
+        logger.info(f"VRAM Disponible      : {vram_gb:.2f} GB")
     else:
         device = torch.device("cpu")
-        print("Dispositivo          : CPU")
+        logger.info("Dispositivo          : CPU")
 
     # Windows no soporta el modelo fork() de multiprocessing que usa PyTorch para
     # lanzar los worker del DataLoader. Con num_workers > 0 en Windows, cada worker
@@ -53,10 +57,10 @@ def setup_environment() -> Tuple[torch.device, int]:
     # En Linux/Mac se usa fork() sin coste de serialización, por eso num_workers=2.
     if os.name == 'nt':
         num_workers = 0
-        print("Configuración OS     : Windows (num_workers=0)")
+        logger.info("Configuración OS     : Windows (num_workers=0)")
     else:
         num_workers = 2
-        print("Configuración OS     : Unix/Linux (num_workers=2)")
+        logger.info("Configuración OS     : Unix/Linux (num_workers=2)")
 
     return device, num_workers
 
@@ -85,7 +89,7 @@ def set_seed(seed: int = 42) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    print(f"\nSemilla global fijada en: {seed}")
+    logger.info(f"Semilla global fijada en: {seed}")
 
 
 # =========================================================
@@ -650,15 +654,12 @@ def mostrar_info_modelo(model: torch.nn.Module) -> None:
     # si se congela el backbone (requires_grad=False en sus capas), los parámetros
     # entrenables serán mucho menos que el total, lo que acelera el entrenamiento
     # y reduce el riesgo de sobreajuste en datasets pequeños.
-    print("-" * 30)
-    print("RESUMEN DEL MODELO")
-    print("-" * 30)
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Parámetros totales:     {total_params:,}")
-    print(f"Parámetros entrenables: {trainable_params:,}")
-    print(f"Tipo de modelo:         {type(model).__name__}")
-    print("-" * 30)
+    logger.info(
+        f"Modelo: {type(model).__name__} — "
+        f"{total_params:,} parámetros totales, {trainable_params:,} entrenables"
+    )
 
 
 # =========================================================

@@ -19,6 +19,10 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 from IPython.display import display, Markdown
 
+from src.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 def graficar_entrenamiento(hist: Optional[Dict]) -> None:
     """
@@ -32,7 +36,7 @@ def graficar_entrenamiento(hist: Optional[Dict]) -> None:
         Si es None, la función emite un aviso y retorna sin graficar.
     """
     if hist is None:
-        print("No hay historial disponible para graficar.")
+        logger.warning("No hay historial disponible para graficar.")
         return
 
     epochs = range(1, len(hist['train_loss']) + 1)
@@ -179,7 +183,7 @@ def plot_confusion_matrices(y_true: np.ndarray, y_pred: np.ndarray, labels: List
     # (n_labels + cols - 1) // cols es el equivalente entero de ceil(n_labels / cols).
     rows = (n_labels + cols - 1) // cols
 
-    fig, axes = plt.subplots(rows, cols, figsize=(15, rows * 4))
+    _, axes = plt.subplots(rows, cols, figsize=(15, rows * 4))
     # ravel() convierte la matriz 2D de axes en un array 1D para indexar con un solo
     # índice en el bucle, evitando tener que gestionar índices de fila y columna por separado.
     axes = axes.ravel()
@@ -325,7 +329,7 @@ def generar_auditoria_total(
     # Se usa torch.no_grad() porque en esta fase solo se necesitan las probabilidades
     # para clasificar los ejemplos como TP/FP/FN. GradCAM se ejecuta después,
     # fuera del bloque no_grad(), porque necesita gradientes activos.
-    print("Buscando pacientes representativos en el Test Set para Auditoría Visual...")
+    logger.info("Buscando casos representativos de TP/FP/FN en el test set...")
     with torch.no_grad():
         for images, labels in loader:
             imgs_dev = images.to(device)
