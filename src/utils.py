@@ -617,6 +617,62 @@ def mapear_ruta_valid_definitiva(ruta_csv: str, directorio_raiz_valid: str) -> s
     return os.path.join(directorio_raiz_valid, ruta_limpia)
 
 
+def construir_df_test_valid(
+    test_csv_path: str,
+    test_images_root: str,
+    etiquetas_cols: List[str],
+) -> pd.DataFrame:
+    """
+    Construye el DataFrame del conjunto de test "silver standard" a partir del
+    valid oficial de Stanford (anotado por radiólogos).
+
+    El filtrado se restringe a vistas frontales con proyección AP, idéntico al
+    aplicado al conjunto de entrenamiento (aplicar_filtrado_proyecto), para que el
+    test comparta la distribución de entrada que el modelo vio en entrenamiento.
+    Las etiquetas se imputan a 0.0 igual que en el pipeline de entrenamiento.
+
+    Parámetros
+    ----------
+    test_csv_path : str
+        Ruta al valid.csv oficial.
+    test_images_root : str
+        Carpeta que contiene el directorio 'valid/' (raíz para mapear_ruta_valid_definitiva).
+    etiquetas_cols : list of str
+        Columnas de patología activas del modelo (13 clases).
+
+    Devuelve
+    --------
+    pd.DataFrame con la columna 'Ruta_Absoluta' y las columnas de etiquetas,
+    solo con las filas cuya imagen existe en disco.
+
+    Ejemplo
+    -------
+    >>> df = construir_df_test_valid(cfg["data"]["test_csv_path"],
+    ...                              cfg["data"]["test_images_root"],
+    ...                              CHEXPERT_PATHOLOGY_COLS)
+    """
+    df = pd.read_csv(test_csv_path)
+    total = len(df)
+
+    # Filtro Frontal + AP, coherente con el conjunto de entrenamiento.
+    df = df[(df['Frontal/Lateral'] == 'Frontal') & (df['AP/PA'] == 'AP')].reset_index(drop=True)
+
+    # En el valid oficial las etiquetas son binarias; los huecos se imputan a 0.0,
+    # como en el pipeline de entrenamiento (NaN = patología no mencionada = negativo).
+    df[etiquetas_cols] = df[etiquetas_cols].fillna(0.0)
+
+    df['Ruta_Absoluta'] = df['Path'].apply(
+        lambda p: mapear_ruta_valid_definitiva(p, test_images_root)
+    )
+    df = df[df['Ruta_Absoluta'].apply(os.path.exists)].reset_index(drop=True)
+
+    logger.info(
+        f"Test (silver): {len(df)} imágenes Frontal+AP localizadas "
+        f"(de {total} estudios en valid.csv)"
+    )
+    return df
+
+
 # =========================================================
 # Métricas de evaluación
 # =========================================================

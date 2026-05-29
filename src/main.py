@@ -29,6 +29,7 @@ from src.utils import (
 )
 from src.train import train_model
 from src.visualization import graficar_entrenamiento
+from src.evaluate import evaluar_test
 
 logger = get_logger(__name__)
 
@@ -265,6 +266,14 @@ def main():
         save_path=save_path,
     )
     graficar_entrenamiento(history)
+
+    # ==================================================================
+    # Evaluación final sobre el test silver-standard (valid de Stanford)
+    # ==================================================================
+    # El test (valid oficial anotado por radiólogos) es independiente del train
+    # (pacientes disjuntos) y no participa en la selección del modelo —hecha por
+    # F1 de validación—, por lo que su métrica es una estimación no sesgada.
+    evaluar_test(cfg, model, device, cfg["model"]["num_classes"])
 
 
 if __name__ == "__main__":

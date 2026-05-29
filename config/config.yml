@@ -7,6 +7,11 @@ data:
     - "CheXpert-v1.0 batch 4 (train 3)"
   img_size: 224
   train_split: 0.9
+  # Conjunto de test "silver standard": el valid oficial de Stanford (anotado por
+  # radiólogos). Es independiente del train (pacientes disjuntos) y no participa en
+  # la selección del modelo. test_images_root es la carpeta que contiene 'valid/'.
+  test_csv_path: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)/valid.csv"
+  test_images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)"
 
 model:
   name: "densenet121"          # soportados: densenet121, resnet50, efficientnet_b0, efficientnet_b4
