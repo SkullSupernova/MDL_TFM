@@ -31,6 +31,10 @@ training:
   scheduler_patience: 2
   threshold: 0.5
   seed: 42
+  # Margen mínimo de mejora en la métrica de promoción (AUROC CheXpert-5 sobre el test)
+  # para que un nuevo entrenamiento reemplace al mejor modelo. Evita sustituciones por
+  # ruido. Dentro de este margen se desempata por F1-macro.
+  promotion_min_delta: 0.005
 
 pathologies:
   - "No Finding"

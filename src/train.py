@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch import amp
 
-from src.utils import EarlyStopping, ModelCheckpoint, calculate_metrics
+from src.utils import EarlyStopping, ModelCheckpoint, calculate_metrics, auroc_macro
 from src.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -83,7 +83,7 @@ def train_model(
     scaler = amp.GradScaler(device_type) if device_type == 'cuda' else None
 
     # Historial de métricas: se devuelve al final para graficar la evolución.
-    history = {'train_loss': [], 'val_loss': [], 'val_acc': [], 'val_f1': []}
+    history = {'train_loss': [], 'val_loss': [], 'val_acc': [], 'val_f1': [], 'val_auroc': []}
 
     model = model.to(device)
     logger.info(f"Inicio de entrenamiento en: {str(device).upper()}")
@@ -151,7 +151,7 @@ def train_model(
         # ==================================================================
         model.eval()
         val_running_loss = 0.0
-        all_labels, all_preds = [], []
+        all_labels, all_probs = [], []
 
         with torch.no_grad():
             for images, labels in val_loader:
@@ -163,24 +163,28 @@ def train_model(
 
                 val_running_loss += loss.item()
 
-                # Convertir logits a predicciones binarias usando el umbral 0.5.
-                # sigmoid transforma los logits ilimitados a probabilidades [0, 1].
-                # En evaluación usamos 0.5 como umbral fijo; el umbral personalizado
-                # de config.yml se aplica solo en inferencia (api.py y app.py).
-                preds = (torch.sigmoid(outputs) > 0.5).float()
-                all_preds.append(preds.cpu().numpy())
+                # Se guardan las probabilidades (sigmoid) para calcular tanto las
+                # predicciones binarias (umbral 0.5) como la AUROC, que es independiente
+                # del umbral y se usa para seleccionar el mejor epoch. El umbral
+                # personalizado de config.yml se aplica solo en inferencia (api.py y app.py).
+                # .float() es necesario: bajo autocast 'outputs' es bfloat16 (CPU) o
+                # float16 (GPU), y numpy() no soporta esos tipos.
+                all_probs.append(torch.sigmoid(outputs).float().cpu().numpy())
                 all_labels.append(labels.cpu().numpy())
 
         val_epoch_loss = val_running_loss / len(val_loader)
 
         # Concatenar todos los batches en matrices únicas para calcular métricas globales.
         y_true = np.vstack(all_labels)
-        y_pred = np.vstack(all_preds)
+        y_prob = np.vstack(all_probs)
+        y_pred = (y_prob > 0.5).astype(np.float32)
         metrics = calculate_metrics(y_true, y_pred)
+        val_auroc, _ = auroc_macro(y_true, y_prob)
 
         history['val_loss'].append(val_epoch_loss)
         history['val_acc'].append(metrics['accuracy'])
         history['val_f1'].append(metrics['f1_macro'])
+        history['val_auroc'].append(val_auroc)
 
         # Actualizar el scheduler con la pérdida de validación.
         # ReduceLROnPlateau divide la tasa de aprendizaje cuando la pérdida de
@@ -193,16 +197,16 @@ def train_model(
         # ==================================================================
         logger.info(
             f"Época {epoch + 1} — Train Loss: {epoch_train_loss:.4f} | "
-            f"Val Loss: {val_epoch_loss:.4f} | "
-            f"Val Acc: {metrics['accuracy']:.4f} | Val F1: {metrics['f1_macro']:.4f}"
+            f"Val Loss: {val_epoch_loss:.4f} | Val Acc: {metrics['accuracy']:.4f} | "
+            f"Val F1: {metrics['f1_macro']:.4f} | Val AUROC: {val_auroc:.4f}"
         )
 
-        # Guardar en memoria los pesos si este epoch tiene el mejor F1 hasta ahora.
-        # Se usa F1-macro y no la pérdida porque en clasificación multietiqueta
-        # con clases desbalanceadas el F1 refleja mejor el rendimiento real del modelo.
-        saved = model_checkpoint(model, metrics['f1_macro'])
+        # Guardar en memoria los pesos si este epoch tiene la mejor AUROC de validación
+        # hasta ahora. Se usa AUROC (no F1 a umbral 0.5) porque es independiente del
+        # umbral y más robusta al fuerte desbalanceo de clases del dataset.
+        saved = model_checkpoint(model, val_auroc)
         if saved:
-            logger.info(f"  Nuevo mejor modelo — F1: {metrics['f1_macro']:.4f}")
+            logger.info(f"  Nuevo mejor modelo — Val AUROC: {val_auroc:.4f}")
 
         # Comprobar si se activa el Early Stopping.
         # Si se ha superado la paciencia, se rompe el bucle y se pasa directamente

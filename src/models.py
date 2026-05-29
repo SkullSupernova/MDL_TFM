@@ -44,6 +44,14 @@ CHEXPERT_PATHOLOGY_COLS_14: List[str] = [
     'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices'
 ]
 
+# Las 5 patologías de la competición oficial de CheXpert (Irvin et al., 2019).
+# Se usan como criterio de promoción del mejor modelo porque están bien representadas
+# en el conjunto de test silver (valid de Stanford) —soportes 30-110 positivos—, lo que
+# da una AUROC estable, y porque son el estándar de comparación con la literatura.
+CHEXPERT_COMPETITION_5: List[str] = [
+    'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Pleural Effusion'
+]
+
 
 def get_pathology_labels(num_classes: int) -> List[str]:
     """Return the pathology label list matching the number of model output classes."""

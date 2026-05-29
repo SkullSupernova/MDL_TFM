@@ -11,6 +11,9 @@ Uso:
 """
 
 import argparse
+from datetime import datetime
+from typing import Optional
+
 import yaml
 import numpy as np
 import pandas as pd
@@ -30,6 +33,15 @@ from src.utils import (
 from src.train import train_model
 from src.visualization import graficar_entrenamiento
 from src.evaluate import evaluar_test
+from src.model_registry import (
+    cargar_registro,
+    es_mejor,
+    guardar_registro,
+    registrar_experimento,
+    promover,
+    descartar,
+    RUTA_HISTORIAL,
+)
 
 logger = get_logger(__name__)
 
@@ -96,6 +108,85 @@ def _patient_split(df: pd.DataFrame, train_ratio: float, seed: int):
     train_idx = df.index[df["Patient"].isin(train_pats)].tolist()
     val_idx = df.index[~df["Patient"].isin(train_pats)].tolist()
     return train_idx, val_idx
+
+
+def _fmt(x: Optional[float]) -> str:
+    """Formatea una métrica que puede ser None (clase/conjunto no evaluable)."""
+    return f"{x:.4f}" if x is not None else "n/a"
+
+
+def _gestionar_promocion(
+    cfg: dict, model_name: str, candidato_path: str, produccion_path: str,
+    history: dict, test_metrics: dict
+) -> None:
+    """
+    Decide si el modelo recién entrenado reemplaza al mejor modelo en producción.
+
+    Compara la métrica de promoción (AUROC CheXpert-5 sobre el test silver, con F1-macro
+    de desempate) contra el campeón registrado. Promueve el candidato a producción solo
+    si mejora por encima de 'promotion_min_delta'; en caso contrario conserva el modelo
+    actual y descarta el candidato. Registra siempre el experimento para auditoría.
+    """
+    # El modelo devuelto por train_model corresponde al epoch de mayor AUROC de
+    # validación; sus métricas de validación se leen de ese epoch del historial.
+    best_idx = int(np.argmax(history["val_auroc"]))
+    val_metrics = {
+        "auroc_macro": history["val_auroc"][best_idx],
+        "f1_macro": history["val_f1"][best_idx],
+        "accuracy": history["val_acc"][best_idx],
+    }
+
+    campeon = cargar_registro(model_name)
+    # cargar_registro devuelve el registro completo; es_mejor compara solo las
+    # métricas de test (donde está auroc_chexpert5 / f1_macro).
+    campeon_test = campeon["test_metrics"] if campeon else None
+    min_delta = cfg["training"].get("promotion_min_delta", 0.0)
+    promovido = es_mejor(test_metrics, campeon_test, min_delta)
+
+    registro = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "backbone": model_name,
+        "hiperparametros": {
+            "epochs": cfg["training"]["epochs"],
+            "learning_rate": cfg["training"]["learning_rate"],
+            "batch_size": cfg["training"]["batch_size"],
+            "weight_decay": cfg["training"]["weight_decay"],
+            "seed": cfg["training"]["seed"],
+        },
+        "val_metrics": val_metrics,
+        "test_metrics": test_metrics,
+        "checkpoint_path": produccion_path,
+        "promovido": promovido,
+    }
+
+    if promovido:
+        promover(candidato_path, produccion_path)
+        guardar_registro(model_name, registro)
+        if campeon is None:
+            logger.info(
+                f"NUEVO MEJOR MODELO (primer registro) — AUROC CheXpert-5 (test): "
+                f"{_fmt(test_metrics['auroc_chexpert5'])} | F1-macro: {test_metrics['f1_macro']:.4f}. "
+                f"Guardado en {produccion_path}."
+            )
+        else:
+            logger.info(
+                f"NUEVO MEJOR MODELO — AUROC CheXpert-5 (test): "
+                f"{_fmt(campeon['test_metrics'].get('auroc_chexpert5'))} -> "
+                f"{_fmt(test_metrics['auroc_chexpert5'])} | F1-macro: "
+                f"{campeon['test_metrics'].get('f1_macro', 0.0):.4f} -> {test_metrics['f1_macro']:.4f}. "
+                f"Promovido a {produccion_path}."
+            )
+    else:
+        descartar(candidato_path)
+        logger.info(
+            f"El nuevo modelo NO supera al actual (AUROC CheXpert-5 test "
+            f"{_fmt(test_metrics['auroc_chexpert5'])} vs "
+            f"{_fmt(campeon['test_metrics'].get('auroc_chexpert5'))}, min_delta={min_delta}). "
+            f"Se conserva {produccion_path}; candidato descartado."
+        )
+
+    registrar_experimento(registro)
+    logger.info(f"Experimento registrado en {RUTA_HISTORIAL}.")
 
 
 def main():
@@ -262,17 +353,18 @@ def main():
         optimizer, patience=cfg["training"]["scheduler_patience"]
     )
 
-    # El checkpoint se guarda con el nombre del backbone para no sobreescribir
-    # modelos de otras arquitecturas entrenados en la misma máquina.
-    # En ejecuciones de prueba (--subset / --val-subset) se añade el sufijo '_subset'
-    # para no sobreescribir el checkpoint de producción con un modelo entrenado o
-    # validado parcialmente (que no es una línea base válida).
+    # El checkpoint se nombra con el backbone para no mezclar arquitecturas distintas.
+    # Las ejecuciones de prueba (--subset / --val-subset) guardan con sufijo '_subset' y
+    # nunca tocan producción. Los entrenamientos reales guardan primero un checkpoint
+    # CANDIDATO y solo se promueve a producción si supera al mejor modelo registrado.
+    produccion_path = f"models/mejor_modelo_{model_name}.pth"
     es_prueba = bool(args.subset or args.val_subset)
-    sufijo = "_subset" if es_prueba else ""
-    save_path = f"models/mejor_modelo_{model_name}{sufijo}.pth"
     if es_prueba:
-        logger.info("Ejecución de prueba: el checkpoint de producción no se sobrescribe.")
-    logger.info(f"Backbone: {model_name} — checkpoint: {save_path}")
+        save_path = f"models/mejor_modelo_{model_name}_subset.pth"
+        logger.info("Ejecución de prueba: no se promociona ni se sobrescribe el modelo de producción.")
+    else:
+        save_path = f"models/_candidato_{model_name}.pth"
+    logger.info(f"Backbone: {model_name} — checkpoint de este run: {save_path}")
 
     # ==================================================================
     # Entrenamiento
@@ -289,9 +381,17 @@ def main():
     # Evaluación final sobre el test silver-standard (valid de Stanford)
     # ==================================================================
     # El test (valid oficial anotado por radiólogos) es independiente del train
-    # (pacientes disjuntos) y no participa en la selección del modelo —hecha por
-    # F1 de validación—, por lo que su métrica es una estimación no sesgada.
-    evaluar_test(cfg, model, device, cfg["model"]["num_classes"])
+    # (pacientes disjuntos) y no participa en la selección del epoch —hecha por
+    # AUROC de validación—. Sus métricas se usan para el gate de promoción.
+    test_metrics = evaluar_test(cfg, model, device, cfg["model"]["num_classes"])
+
+    # ==================================================================
+    # Gate de promoción del mejor modelo (solo en entrenamientos reales)
+    # ==================================================================
+    if es_prueba:
+        logger.info("Ejecución de prueba: omitido el gate de promoción del mejor modelo.")
+    else:
+        _gestionar_promocion(cfg, model_name, save_path, produccion_path, history, test_metrics)
 
 
 if __name__ == "__main__":

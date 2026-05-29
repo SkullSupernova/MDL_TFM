@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.evaluate import evaluate_model
-from src.utils import construir_df_test_valid, calculate_metrics
+from src.utils import construir_df_test_valid, calculate_metrics, auroc_macro, auc_por_clase
 from src.models import CHEXPERT_PATHOLOGY_COLS
 
 
@@ -113,3 +113,31 @@ def test_construir_df_test_valid_columna_ruta_absoluta_presente(tmp_path):
     csv_path, root = _crear_valid_sintetico(tmp_path)
     df = construir_df_test_valid(csv_path, root, CHEXPERT_PATHOLOGY_COLS)
     assert "Ruta_Absoluta" in df.columns
+
+
+# =========================================================
+# auroc_macro / auc_por_clase
+# =========================================================
+
+def test_auroc_macro_separacion_perfecta_devuelve_uno():
+    y_true = np.array([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=float)
+    y_prob = np.array([[0.9, 0.1], [0.1, 0.9], [0.8, 0.2], [0.2, 0.8]])
+    media, n = auroc_macro(y_true, y_prob)
+    assert media == 1.0
+    assert n == 2
+
+
+def test_auroc_macro_omite_clase_sin_positivos():
+    # La columna 1 no tiene ningún positivo: no es evaluable y se omite del promedio.
+    y_true = np.array([[1, 0], [0, 0], [1, 0]], dtype=float)
+    y_prob = np.array([[0.9, 0.3], [0.2, 0.5], [0.7, 0.1]])
+    _, n = auroc_macro(y_true, y_prob)
+    assert n == 1
+
+
+def test_auc_por_clase_none_para_clase_degenerada():
+    y_true = np.array([[1, 0], [0, 0], [1, 0]], dtype=float)
+    y_prob = np.array([[0.9, 0.3], [0.2, 0.5], [0.7, 0.1]])
+    aucs = auc_por_clase(y_true, y_prob, ["A", "B"])
+    assert aucs["B"] is None
+    assert aucs["A"] is not None

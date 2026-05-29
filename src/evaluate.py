@@ -14,7 +14,7 @@ Uso:
 import argparse
 import csv
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -24,8 +24,19 @@ from torchvision import transforms
 from sklearn.metrics import precision_recall_fscore_support
 
 from src.logging_config import get_logger
-from src.models import CheXpertDataset, get_pathology_labels, load_checkpoint
-from src.utils import setup_environment, calculate_metrics, construir_df_test_valid
+from src.models import (
+    CheXpertDataset,
+    get_pathology_labels,
+    load_checkpoint,
+    CHEXPERT_COMPETITION_5,
+)
+from src.utils import (
+    setup_environment,
+    calculate_metrics,
+    construir_df_test_valid,
+    auc_por_clase,
+    auroc_macro,
+)
 
 logger = get_logger(__name__)
 
@@ -86,24 +97,33 @@ def construir_test_loader(cfg: dict, etiquetas_cols: List[str]) -> DataLoader:
 
 
 def _reportar_por_clase(
-    y_true: np.ndarray, y_pred: np.ndarray, labels: List[str], model_name: str
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    aucs: Dict[str, Optional[float]],
+    labels: List[str],
+    model_name: str,
 ) -> List[dict]:
     """Calcula métricas por clase, las registra y las guarda en CSV. Devuelve las filas."""
     precision, recall, f1, support = precision_recall_fscore_support(
         y_true, y_pred, average=None, zero_division=0
     )
 
-    logger.info("Métricas por clase (umbral 0.5):")
-    logger.info(f"  {'Patología':30s}{'Precision':>10}{'Recall':>9}{'F1':>9}{'Soporte':>9}")
+    logger.info("Métricas por clase (AUROC independiente del umbral; P/R/F1 a umbral 0.5):")
+    logger.info(f"  {'Patología':30s}{'AUROC':>8}{'Precision':>10}{'Recall':>9}{'F1':>9}{'Soporte':>9}")
     filas = []
     for i, lab in enumerate(labels):
         sop = int(support[i])
-        # Una clase sin positivos reales en el test no permite estimar recall/F1:
-        # se marca para que el sesgo por falta de soporte sea explícito en el reporte.
-        aviso = "   <-- soporte 0: no fiable" if sop == 0 else ""
-        logger.info(f"  {lab:30s}{precision[i]:10.4f}{recall[i]:9.4f}{f1[i]:9.4f}{sop:9d}{aviso}")
+        auc = aucs.get(lab)
+        auc_str = f"{auc:8.4f}" if auc is not None else f"{'n/a':>8}"
+        # AUROC None o soporte 0 indican que la clase no es evaluable de forma fiable
+        # en este test (sin positivos suficientes): se marca explícitamente.
+        aviso = "   <-- no evaluable (soporte insuficiente)" if (auc is None or sop == 0) else ""
+        logger.info(
+            f"  {lab:30s}{auc_str}{precision[i]:10.4f}{recall[i]:9.4f}{f1[i]:9.4f}{sop:9d}{aviso}"
+        )
         filas.append({
             "patologia": lab,
+            "auroc": round(auc, 4) if auc is not None else "",
             "precision": round(float(precision[i]), 4),
             "recall": round(float(recall[i]), 4),
             "f1": round(float(f1[i]), 4),
@@ -113,7 +133,9 @@ def _reportar_por_clase(
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
     out = _LOG_DIR / f"test_metrics_{model_name}.csv"
     with open(out, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["patologia", "precision", "recall", "f1", "soporte"])
+        writer = csv.DictWriter(
+            f, fieldnames=["patologia", "auroc", "precision", "recall", "f1", "soporte"]
+        )
         writer.writeheader()
         writer.writerows(filas)
     logger.info(f"Métricas por clase guardadas en: {out}")
@@ -122,28 +144,47 @@ def _reportar_por_clase(
 
 def evaluar_test(
     cfg: dict, model: torch.nn.Module, device: torch.device, num_classes: int
-) -> Dict[str, float]:
+) -> Dict[str, Optional[float]]:
     """
-    Evalúa un modelo ya cargado sobre el test silver-standard y devuelve las métricas globales.
+    Evalúa un modelo sobre el test silver-standard y devuelve sus métricas.
 
-    Registra accuracy y F1-macro globales y una tabla de métricas por clase con su
-    soporte (nº de positivos reales), marcando las clases sin soporte como no fiables.
+    Métrica principal de promoción: AUROC media de las 5 patologías oficiales de
+    CheXpert (CHEXPERT_COMPETITION_5), bien representadas en este test. Se reportan
+    además la AUROC-macro sobre todas las clases evaluables, el F1-macro, la accuracy
+    y la AUROC/P/R/F1 por clase con su soporte (marcando las no evaluables).
+
+    Devuelve un diccionario con: auroc_chexpert5, auroc_macro_evaluable, f1_macro,
+    accuracy, n_muestras.
 
     Raises:
         FileNotFoundError: si el valid.csv configurado no existe.
     """
     labels = get_pathology_labels(num_classes)
     loader = construir_test_loader(cfg, labels)
-    y_true, y_pred, _ = evaluate_model(model, loader, device)
+    y_true, y_pred, y_prob = evaluate_model(model, loader, device)
 
-    metrics = calculate_metrics(y_true, y_pred)
+    base = calculate_metrics(y_true, y_pred)
+    aucs = auc_por_clase(y_true, y_prob, labels)
+    auroc_ev, n_ev = auroc_macro(y_true, y_prob)
+    vals5 = [aucs[c] for c in CHEXPERT_COMPETITION_5 if aucs.get(c) is not None]
+    auroc5 = float(np.mean(vals5)) if vals5 else None
+
     logger.info("=== Evaluación en test (silver standard) ===")
+    a5 = f"{auroc5:.4f}" if auroc5 is not None else "n/a"
     logger.info(
-        f"Muestras: {len(y_true)} | Accuracy: {metrics['accuracy']:.4f} | "
-        f"F1-macro: {metrics['f1_macro']:.4f}"
+        f"Muestras: {len(y_true)} | AUROC CheXpert-5: {a5} ({len(vals5)}/5 clases) | "
+        f"AUROC-macro evaluable: {auroc_ev:.4f} ({n_ev} clases) | "
+        f"F1-macro: {base['f1_macro']:.4f} | Accuracy: {base['accuracy']:.4f}"
     )
-    _reportar_por_clase(y_true, y_pred, labels, cfg["model"]["name"])
-    return metrics
+    _reportar_por_clase(y_true, y_pred, aucs, labels, cfg["model"]["name"])
+
+    return {
+        "auroc_chexpert5": auroc5,
+        "auroc_macro_evaluable": auroc_ev,
+        "f1_macro": base["f1_macro"],
+        "accuracy": base["accuracy"],
+        "n_muestras": int(len(y_true)),
+    }
 
 
 def _parse_args() -> argparse.Namespace:

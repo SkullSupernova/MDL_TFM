@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from IPython.display import display, Markdown
 
 from src.logging_config import get_logger
@@ -698,6 +698,46 @@ def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float
     acc = accuracy_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred, average='macro', zero_division=0)
     return {'accuracy': acc, 'f1_macro': f1}
+
+
+def auc_por_clase(
+    y_true: np.ndarray, y_prob: np.ndarray, labels: List[str]
+) -> Dict[str, Optional[float]]:
+    """
+    Calcula la AUROC de cada clase a partir de las probabilidades predichas.
+
+    Una clase cuyo vector de etiquetas reales no contiene ambos valores (0 y 1) no
+    tiene AUROC definida (no se puede separar positivos de negativos): se devuelve
+    None para esa clase. Esto ocurre con patologías sin positivos en el conjunto
+    (p. ej. Fracture en el test silver).
+
+    Devuelve un diccionario {nombre_clase: auroc o None}.
+    """
+    aucs: Dict[str, Optional[float]] = {}
+    for i, lab in enumerate(labels):
+        col = y_true[:, i]
+        # roc_auc_score exige al menos un positivo y un negativo en la columna.
+        if col.min() == col.max():
+            aucs[lab] = None
+        else:
+            aucs[lab] = float(roc_auc_score(col, y_prob[:, i]))
+    return aucs
+
+
+def auroc_macro(y_true: np.ndarray, y_prob: np.ndarray) -> Tuple[float, int]:
+    """
+    Calcula la AUROC media (macro) sobre las clases evaluables.
+
+    Solo promedia las columnas cuya etiqueta real contiene ambos valores (0 y 1);
+    las clases sin positivos o sin negativos se omiten del promedio. Devuelve
+    (media_auroc, n_clases_evaluables). Si ninguna clase es evaluable devuelve (0.0, 0).
+    """
+    aucs = []
+    for j in range(y_true.shape[1]):
+        col = y_true[:, j]
+        if col.min() != col.max():
+            aucs.append(roc_auc_score(col, y_prob[:, j]))
+    return (float(np.mean(aucs)) if aucs else 0.0), len(aucs)
 
 
 # =========================================================
