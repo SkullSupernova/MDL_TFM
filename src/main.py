@@ -67,6 +67,10 @@ def _parse_args() -> argparse.Namespace:
         "--subset", type=int, default=None,
         help="Limitar el conjunto de entrenamiento a N imágenes. Útil para validación rápida."
     )
+    parser.add_argument(
+        "--val-subset", type=int, default=None,
+        help="Limitar el conjunto de validación a N imágenes. Para smoke tests rápidos de extremo a extremo."
+    )
     return parser.parse_args()
 
 
@@ -183,6 +187,13 @@ def main():
         train_idx = train_idx[:args.subset]
         logger.info(f"Subconjunto aplicado: usando {len(train_idx)} imágenes de entrenamiento")
 
+    # El recorte de validación es independiente del de entrenamiento: la fase de
+    # validación recorre todo val_idx por defecto, lo que en un smoke test domina el
+    # tiempo total. Limitarla permite probar el flujo de extremo a extremo en segundos.
+    if args.val_subset:
+        val_idx = val_idx[:args.val_subset]
+        logger.info(f"Subconjunto de validación aplicado: usando {len(val_idx)} imágenes de validación")
+
     train_ds = CheXpertDataset(
         df.loc[train_idx].reset_index(drop=True),
         transform=train_tf,
@@ -253,7 +264,14 @@ def main():
 
     # El checkpoint se guarda con el nombre del backbone para no sobreescribir
     # modelos de otras arquitecturas entrenados en la misma máquina.
-    save_path = f"models/mejor_modelo_{model_name}.pth"
+    # En ejecuciones de prueba (--subset / --val-subset) se añade el sufijo '_subset'
+    # para no sobreescribir el checkpoint de producción con un modelo entrenado o
+    # validado parcialmente (que no es una línea base válida).
+    es_prueba = bool(args.subset or args.val_subset)
+    sufijo = "_subset" if es_prueba else ""
+    save_path = f"models/mejor_modelo_{model_name}{sufijo}.pth"
+    if es_prueba:
+        logger.info("Ejecución de prueba: el checkpoint de producción no se sobrescribe.")
     logger.info(f"Backbone: {model_name} — checkpoint: {save_path}")
 
     # ==================================================================
