@@ -8,7 +8,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.evaluate import evaluate_model
-from src.utils import construir_df_test_valid, calculate_metrics, auroc_macro, auc_por_clase
+from src.utils import (
+    construir_df_test_valid, calculate_metrics, auroc_macro, auc_por_clase,
+    pr_auc_macro, pr_auc_por_clase, distribucion_clases,
+)
 from src.models import CHEXPERT_PATHOLOGY_COLS
 
 
@@ -141,3 +144,30 @@ def test_auc_por_clase_none_para_clase_degenerada():
     aucs = auc_por_clase(y_true, y_prob, ["A", "B"])
     assert aucs["B"] is None
     assert aucs["A"] is not None
+
+
+# =========================================================
+# pr_auc / distribucion_clases
+# =========================================================
+
+def test_pr_auc_macro_separacion_perfecta_devuelve_uno():
+    y_true = np.array([[1, 0], [0, 1], [1, 0], [0, 1]], dtype=float)
+    y_prob = np.array([[0.9, 0.1], [0.1, 0.9], [0.8, 0.2], [0.2, 0.8]])
+    media, n = pr_auc_macro(y_true, y_prob)
+    assert media == pytest.approx(1.0)
+    assert n == 2
+
+
+def test_pr_auc_por_clase_none_sin_positivos():
+    y_true = np.array([[1, 0], [0, 0], [1, 0]], dtype=float)
+    y_prob = np.array([[0.9, 0.3], [0.2, 0.5], [0.7, 0.1]])
+    pr = pr_auc_por_clase(y_true, y_prob, ["A", "B"])
+    assert pr["B"] is None and pr["A"] is not None
+
+
+def test_distribucion_clases_cuenta_y_detecta_ausentes():
+    y = np.array([[1, 0, 0], [1, 0, 0], [0, 0, 0]], dtype=float)
+    d = distribucion_clases(y, ["A", "B", "C"])
+    assert d["n_muestras"] == 3
+    assert d["por_clase"]["A"]["positivos"] == 2
+    assert set(d["clases_ausentes"]) == {"B", "C"}

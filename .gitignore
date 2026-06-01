@@ -13,6 +13,9 @@ ENV/
 # Data
 data/
 
+# Experimentos (artefactos pesados de seguimiento; informes locales)
+experiments/
+
 # Distribución / packaging
 *.egg-info/
 dist/

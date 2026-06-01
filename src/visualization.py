@@ -13,7 +13,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import torch
-from sklearn.metrics import multilabel_confusion_matrix
+from sklearn.metrics import (
+    multilabel_confusion_matrix,
+    roc_curve,
+    precision_recall_curve,
+    roc_auc_score,
+    average_precision_score,
+)
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
@@ -24,7 +30,17 @@ from src.logging_config import get_logger
 logger = get_logger(__name__)
 
 
-def graficar_entrenamiento(hist: Optional[Dict]) -> None:
+def _mostrar_o_guardar(save_path: Optional[str]) -> None:
+    """Guarda la figura activa en disco si se indica ruta; si no, la muestra (Jupyter)."""
+    # En el pipeline CLI / tracker se guarda a PNG (headless); en notebook se muestra.
+    if save_path:
+        plt.savefig(save_path, dpi=120, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+
+
+def graficar_entrenamiento(hist: Optional[Dict], save_path: Optional[str] = None) -> None:
     """
     Genera gráficas de evolución de pérdida (Loss) y métricas de validación
     (Accuracy y F1-Macro) a partir del historial de entrenamiento.
@@ -76,7 +92,7 @@ def graficar_entrenamiento(hist: Optional[Dict]) -> None:
     # subplots los labels del eje x del gráfico superior a menudo se solapan
     # con el título del gráfico inferior.
     plt.tight_layout()
-    plt.show()
+    _mostrar_o_guardar(save_path)
 
 
 def inspeccion_visual(loader, model, classes: List[str], device: torch.device, n_images: int = 6) -> None:
@@ -158,7 +174,9 @@ def inspeccion_visual(loader, model, classes: List[str], device: torch.device, n
     plt.show()
 
 
-def plot_confusion_matrices(y_true: np.ndarray, y_pred: np.ndarray, labels: List[str]) -> None:
+def plot_confusion_matrices(
+    y_true: np.ndarray, y_pred: np.ndarray, labels: List[str], save_path: Optional[str] = None
+) -> None:
     """
     Genera una cuadrícula de matrices de confusión binarias, una por etiqueta.
 
@@ -201,13 +219,14 @@ def plot_confusion_matrices(y_true: np.ndarray, y_pred: np.ndarray, labels: List
         axes[j].axis('off')
 
     plt.tight_layout()
-    plt.show()
+    _mostrar_o_guardar(save_path)
 
 
 def matriz_resumen_multietiqueta(
     y_true: np.ndarray,
     y_pred: np.ndarray,
-    classes: List[str]
+    classes: List[str],
+    save_path: Optional[str] = None
 ) -> None:
     """
     Genera un heatmap resumen de sensibilidad, especificidad, tasa de omisión
@@ -280,7 +299,56 @@ def matriz_resumen_multietiqueta(
     plt.xticks(fontsize=11)
     plt.yticks(fontsize=11, rotation=0)
     plt.tight_layout()
-    plt.show()
+    _mostrar_o_guardar(save_path)
+
+
+def plot_roc_curves(
+    y_true: np.ndarray, y_prob: np.ndarray, labels: List[str], save_path: Optional[str] = None
+) -> None:
+    """
+    Dibuja las curvas ROC por clase (una línea por patología evaluable) con su AUROC.
+
+    Solo se trazan las clases con positivos y negativos en y_true; las no evaluables
+    (p. ej. Fracture en el test silver) se omiten del gráfico. Pensada para guardarse
+    a disco como artefacto del experimento.
+    """
+    plt.figure(figsize=(9, 8))
+    for i, lab in enumerate(labels):
+        col = y_true[:, i]
+        if col.min() == col.max():
+            continue
+        fpr, tpr, _ = roc_curve(col, y_prob[:, i])
+        plt.plot(fpr, tpr, label=f"{lab} (AUC={roc_auc_score(col, y_prob[:, i]):.3f})")
+    plt.plot([0, 1], [0, 1], 'k--', alpha=0.4)
+    plt.xlabel('Tasa de Falsos Positivos')
+    plt.ylabel('Tasa de Verdaderos Positivos (Recall)')
+    plt.title('Curvas ROC por patología')
+    plt.legend(loc='lower right', fontsize=8)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    _mostrar_o_guardar(save_path)
+
+
+def plot_pr_curves(
+    y_true: np.ndarray, y_prob: np.ndarray, labels: List[str], save_path: Optional[str] = None
+) -> None:
+    """
+    Dibuja las curvas precisión-recall por clase con su PR-AUC (average precision).
+
+    Más informativas que ROC bajo desbalanceo. Se omiten las clases sin positivos.
+    """
+    plt.figure(figsize=(9, 8))
+    for i, lab in enumerate(labels):
+        col = y_true[:, i]
+        if col.max() == 0:
+            continue
+        precision, recall, _ = precision_recall_curve(col, y_prob[:, i])
+        plt.plot(recall, precision, label=f"{lab} (AP={average_precision_score(col, y_prob[:, i]):.3f})")
+    plt.xlabel('Recall')
+    plt.ylabel('Precisión')
+    plt.title('Curvas Precisión-Recall por patología')
+    plt.legend(loc='upper right', fontsize=8)
+    plt.grid(True, linestyle='--', alpha=0.5)
+    _mostrar_o_guardar(save_path)
 
 
 def generar_auditoria_total(

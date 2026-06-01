@@ -50,3 +50,7 @@ pathologies:
   - "Pleural Effusion"
   - "Fracture"
   - "Support Devices"
+
+experiments:
+  root: "experiments"        # carpeta raíz de los experimentos (gitignored)
+  n_worst_cases: 20          # nº de FP/FN por clase guardados para análisis de error

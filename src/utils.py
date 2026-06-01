@@ -15,7 +15,7 @@ from typing import List, Optional, Tuple, Dict
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
+from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, average_precision_score
 from IPython.display import display, Markdown
 
 from src.logging_config import get_logger
@@ -740,9 +740,64 @@ def auroc_macro(y_true: np.ndarray, y_prob: np.ndarray) -> Tuple[float, int]:
     return (float(np.mean(aucs)) if aucs else 0.0), len(aucs)
 
 
+def pr_auc_por_clase(
+    y_true: np.ndarray, y_prob: np.ndarray, labels: List[str]
+) -> Dict[str, Optional[float]]:
+    """
+    Calcula la PR-AUC (average precision) de cada clase.
+
+    La PR-AUC es más informativa que la ROC-AUC bajo fuerte desbalanceo (prevalencias
+    bajas), porque no premia el acierto trivial sobre los negativos. Una clase sin
+    positivos reales no tiene PR-AUC definida: se devuelve None.
+    """
+    praucs: Dict[str, Optional[float]] = {}
+    for i, lab in enumerate(labels):
+        col = y_true[:, i]
+        if col.max() == 0:   # sin positivos: average_precision no está definida
+            praucs[lab] = None
+        else:
+            praucs[lab] = float(average_precision_score(col, y_prob[:, i]))
+    return praucs
+
+
+def pr_auc_macro(y_true: np.ndarray, y_prob: np.ndarray) -> Tuple[float, int]:
+    """PR-AUC media (macro) sobre las clases con al menos un positivo. (media, n_evaluables)."""
+    praucs = []
+    for j in range(y_true.shape[1]):
+        if y_true[:, j].max() > 0:
+            praucs.append(average_precision_score(y_true[:, j], y_prob[:, j]))
+    return (float(np.mean(praucs)) if praucs else 0.0), len(praucs)
+
+
+def distribucion_clases(y_true: np.ndarray, labels: List[str]) -> Dict:
+    """
+    Resume la distribución de positivos por clase de una matriz de etiquetas binaria.
+
+    Devuelve, por clase, el nº de positivos y su porcentaje, más la lista de clases
+    ausentes (0 positivos). Sirve para documentar cada conjunto (train/val/test) y dejar
+    explícitas las clases sin representación, que no permiten métricas fiables.
+    """
+    n = int(len(y_true))
+    por_clase = {}
+    ausentes = []
+    for i, lab in enumerate(labels):
+        pos = int((y_true[:, i] == 1).sum())
+        por_clase[lab] = {"positivos": pos, "porcentaje": round(100 * pos / n, 2) if n else 0.0}
+        if pos == 0:
+            ausentes.append(lab)
+    return {"n_muestras": n, "por_clase": por_clase, "clases_ausentes": ausentes}
+
+
 # =========================================================
 # Utilidades de inspección del modelo
 # =========================================================
+
+def contar_parametros(model: torch.nn.Module) -> Dict[str, int]:
+    """Devuelve el nº de parámetros totales y entrenables del modelo."""
+    total = sum(p.numel() for p in model.parameters())
+    entrenables = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {"total": total, "entrenables": entrenables}
+
 
 def mostrar_info_modelo(model: torch.nn.Module) -> None:
     """Imprime un resumen técnico de parámetros totales y entrenables del modelo."""
@@ -750,11 +805,10 @@ def mostrar_info_modelo(model: torch.nn.Module) -> None:
     # si se congela el backbone (requires_grad=False en sus capas), los parámetros
     # entrenables serán mucho menos que el total, lo que acelera el entrenamiento
     # y reduce el riesgo de sobreajuste en datasets pequeños.
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    p = contar_parametros(model)
     logger.info(
         f"Modelo: {type(model).__name__} — "
-        f"{total_params:,} parámetros totales, {trainable_params:,} entrenables"
+        f"{p['total']:,} parámetros totales, {p['entrenables']:,} entrenables"
     )
 
 

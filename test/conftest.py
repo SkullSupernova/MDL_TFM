@@ -1,3 +1,6 @@
+import matplotlib
+matplotlib.use("Agg")  # backend headless para que las gráficas se generen sin display en tests
+
 import numpy as np
 import pandas as pd
 import pytest

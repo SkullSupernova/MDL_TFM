@@ -11,8 +11,12 @@ Uso:
 """
 
 import argparse
+import time
 from datetime import datetime
 from typing import Optional
+
+import matplotlib
+matplotlib.use("Agg")  # backend headless: el pipeline CLI guarda las figuras a PNG, no las muestra
 
 import yaml
 import numpy as np
@@ -23,16 +27,18 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from src.logging_config import get_logger
-from src.models import CheXpertDataset, build_model, CHEXPERT_PATHOLOGY_COLS
+from src.models import CheXpertDataset, build_model, CHEXPERT_PATHOLOGY_COLS, get_pathology_labels
 from src.utils import (
     setup_environment,
     set_seed,
     aplicar_filtrado_proyecto,
     obtener_ruta_absoluta_train,
+    construir_df_test_valid,
+    contar_parametros,
 )
 from src.train import train_model
-from src.visualization import graficar_entrenamiento
-from src.evaluate import evaluar_test
+from src.evaluate import evaluar_test, evaluar_loader
+from src.experiment_tracker import ExperimentTracker
 from src.model_registry import (
     cargar_registro,
     es_mejor,
@@ -83,6 +89,10 @@ def _parse_args() -> argparse.Namespace:
         "--val-subset", type=int, default=None,
         help="Limitar el conjunto de validación a N imágenes. Para smoke tests rápidos de extremo a extremo."
     )
+    parser.add_argument(
+        "--tag", default=None,
+        help="Etiqueta opcional para identificar el experimento en experiments/<run_id>."
+    )
     return parser.parse_args()
 
 
@@ -118,7 +128,7 @@ def _fmt(x: Optional[float]) -> str:
 def _gestionar_promocion(
     cfg: dict, model_name: str, candidato_path: str, produccion_path: str,
     history: dict, test_metrics: dict
-) -> None:
+) -> dict:
     """
     Decide si el modelo recién entrenado reemplaza al mejor modelo en producción.
 
@@ -187,6 +197,13 @@ def _gestionar_promocion(
 
     registrar_experimento(registro)
     logger.info(f"Experimento registrado en {RUTA_HISTORIAL}.")
+    return {
+        "promovido": promovido,
+        "metrica": "auroc_chexpert5 (test); F1-macro desempate",
+        "valor": test_metrics.get("auroc_chexpert5"),
+        "campeon_anterior": campeon_test.get("auroc_chexpert5") if campeon_test else None,
+        "min_delta": min_delta,
+    }
 
 
 def main():
@@ -208,13 +225,20 @@ def main():
     device, num_workers = setup_environment()
     set_seed(cfg["training"]["seed"])
 
+    # Las ejecuciones de prueba (--subset / --val-subset) no promocionan modelo y se
+    # etiquetan como 'smoke' para distinguir su carpeta de experimento.
+    es_prueba = bool(args.subset or args.val_subset)
+    tracker = ExperimentTracker(
+        cfg, tag=(args.tag or ("smoke" if es_prueba else None)), device=device
+    )
+
     # ==================================================================
     # ETL
     # ==================================================================
     df = pd.read_csv(cfg["data"]["csv_path"])
     logger.info(f"CSV cargado: {len(df)} estudios en bruto")
 
-    df, _ = aplicar_filtrado_proyecto(df)
+    df, etl_reporte = aplicar_filtrado_proyecto(df)
     logger.info(f"Dataset tras ETL: {len(df)} estudios retenidos")
 
     # Extraer ID de paciente desde el campo Path (formato: .../patientXXXXX/...).
@@ -285,6 +309,13 @@ def main():
         val_idx = val_idx[:args.val_subset]
         logger.info(f"Subconjunto de validación aplicado: usando {len(val_idx)} imágenes de validación")
 
+    # Conjunto de test silver-standard (valid de Stanford). Se construye una vez aquí y
+    # se reutiliza para documentar su distribución y para la evaluación final.
+    pathology_labels = get_pathology_labels(cfg["model"]["num_classes"])
+    df_test = construir_df_test_valid(
+        cfg["data"]["test_csv_path"], cfg["data"]["test_images_root"], pathology_labels
+    )
+
     train_ds = CheXpertDataset(
         df.loc[train_idx].reset_index(drop=True),
         transform=train_tf,
@@ -338,10 +369,11 @@ def main():
     # el modelo les preste tanta atención como a los negativos.
     # BCEWithLogitsLoss acepta pos_weight directamente: multiplica la pérdida
     # de los positivos de cada clase por su peso correspondiente.
-    labels = df.loc[train_idx, CHEXPERT_PATHOLOGY_COLS].values
-    neg = (labels == 0).sum(axis=0)
-    pos = (labels == 1).sum(axis=0) + 1e-6   # +1e-6 evita división por cero en clases sin positivos
-    pos_weight = torch.tensor(neg / pos, dtype=torch.float32).to(device)
+    y_train_labels = df.loc[train_idx, CHEXPERT_PATHOLOGY_COLS].values
+    neg = (y_train_labels == 0).sum(axis=0)
+    pos = (y_train_labels == 1).sum(axis=0) + 1e-6   # +1e-6 evita división por cero en clases sin positivos
+    pos_weight_arr = neg / pos
+    pos_weight = torch.tensor(pos_weight_arr, dtype=torch.float32).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     optimizer = torch.optim.AdamW(
@@ -358,7 +390,6 @@ def main():
     # nunca tocan producción. Los entrenamientos reales guardan primero un checkpoint
     # CANDIDATO y solo se promueve a producción si supera al mejor modelo registrado.
     produccion_path = f"models/mejor_modelo_{model_name}.pth"
-    es_prueba = bool(args.subset or args.val_subset)
     if es_prueba:
         save_path = f"models/mejor_modelo_{model_name}_subset.pth"
         logger.info("Ejecución de prueba: no se promociona ni se sobrescribe el modelo de producción.")
@@ -366,32 +397,120 @@ def main():
         save_path = f"models/_candidato_{model_name}.pth"
     logger.info(f"Backbone: {model_name} — checkpoint de este run: {save_path}")
 
+    # Documentar la composición de los conjuntos en el experimento.
+    provenance = {
+        "csv_path": cfg["data"]["csv_path"],
+        "images_root": cfg["data"]["images_root"],
+        "batches": cfg["data"]["batches"],
+        "test_csv_path": cfg["data"]["test_csv_path"],
+        "train_split": cfg["data"]["train_split"],
+        "seed": cfg["training"]["seed"],
+        "filtros": "Frontal+AP, valores {0,1,NaN}, sin inconsistencias No Finding, sexo M/F",
+        "n_pacientes_train": int(df.loc[train_idx, "Patient"].nunique()),
+        "n_pacientes_val": int(df.loc[val_idx, "Patient"].nunique()),
+        "solapamiento_pacientes_train_val": len(
+            set(df.loc[train_idx, "Patient"]) & set(df.loc[val_idx, "Patient"])
+        ),
+        "subset": args.subset,
+        "val_subset": args.val_subset,
+    }
+    tracker.registrar_datasets(
+        y_train_labels,
+        df.loc[val_idx, CHEXPERT_PATHOLOGY_COLS].values,
+        df_test[pathology_labels].values,
+        pathology_labels,
+        etl_reporte,
+        {lab: float(v) for lab, v in zip(CHEXPERT_PATHOLOGY_COLS, pos_weight_arr)},
+        provenance,
+    )
+
     # ==================================================================
     # Entrenamiento
     # ==================================================================
+    t0 = time.time()
     history, model = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
         num_epochs=cfg["training"]["epochs"],
         device=device,
         save_path=save_path,
     )
-    graficar_entrenamiento(history)
+    duracion = time.time() - t0
+    tracker.registrar_historial(history)
 
     # ==================================================================
-    # Evaluación final sobre el test silver-standard (valid de Stanford)
+    # Evaluación del mejor modelo (validación y test silver-standard)
     # ==================================================================
-    # El test (valid oficial anotado por radiólogos) es independiente del train
-    # (pacientes disjuntos) y no participa en la selección del epoch —hecha por
-    # AUROC de validación—. Sus métricas se usan para el gate de promoción.
-    test_metrics = evaluar_test(cfg, model, device, cfg["model"]["num_classes"])
+    # Validación: predicciones limpias del mejor modelo para el informe (una pasada).
+    val_metrics, yt_v, yp_v, ypr_v = evaluar_loader(model, val_loader, pathology_labels, device)
+    tracker.registrar_evaluacion(
+        "val", val_metrics, yt_v, yp_v, ypr_v, pathology_labels,
+        df.loc[val_idx, "Ruta_Absoluta"].tolist(),
+    )
+
+    # Test silver-standard: independiente del train (pacientes disjuntos); sus métricas
+    # alimentan el gate de promoción y el informe.
+    test_metrics, yt_t, yp_t, ypr_t, df_test = evaluar_test(
+        cfg, model, device, cfg["model"]["num_classes"], df_test=df_test
+    )
+    tracker.registrar_evaluacion(
+        "test", test_metrics, yt_t, yp_t, ypr_t, pathology_labels,
+        df_test["Ruta_Absoluta"].tolist(),
+    )
 
     # ==================================================================
     # Gate de promoción del mejor modelo (solo en entrenamientos reales)
     # ==================================================================
+    test_scalars = {
+        k: test_metrics[k] for k in (
+            "auroc_chexpert5", "auroc_macro_evaluable", "pr_auc_macro_evaluable",
+            "f1_macro", "f1_micro", "accuracy", "n_muestras",
+        )
+    }
     if es_prueba:
         logger.info("Ejecución de prueba: omitido el gate de promoción del mejor modelo.")
+        promocion = {"promovido": False, "motivo": "ejecución de prueba"}
     else:
-        _gestionar_promocion(cfg, model_name, save_path, produccion_path, history, test_metrics)
+        promocion = _gestionar_promocion(
+            cfg, model_name, save_path, produccion_path, history, test_scalars
+        )
+
+    # ==================================================================
+    # Cierre del experimento: manifest + informe + leaderboard
+    # ==================================================================
+    best_idx = int(np.argmax(history["val_auroc"]))
+    epochs_ejec = len(history["train_loss"])
+    if es_prueba:
+        ckpt = save_path
+    elif promocion.get("promovido"):
+        ckpt = produccion_path
+    else:
+        ckpt = None  # candidato descartado por no superar al campeón
+    info_modelo = {
+        "backbone": model_name,
+        "num_classes": cfg["model"]["num_classes"],
+        "dropout": cfg["model"]["dropout"],
+        "hidden_units": cfg["model"]["hidden_units"],
+        "pretrained": cfg["model"]["pretrained"],
+        "params": contar_parametros(model),
+        "checkpoint_path": ckpt,
+    }
+    info_entrenamiento = {
+        "optimizer": "AdamW",
+        "learning_rate": cfg["training"]["learning_rate"],
+        "weight_decay": cfg["training"]["weight_decay"],
+        "scheduler": "ReduceLROnPlateau",
+        "batch_size": cfg["training"]["batch_size"],
+        "seed": cfg["training"]["seed"],
+        "amp": device.type == "cuda",
+        "num_workers": num_workers,
+        "epochs_max": cfg["training"]["epochs"],
+        "epochs_ejecutadas": epochs_ejec,
+        "mejor_epoca": best_idx + 1,
+        "mejor_epoca_val_auroc": history["val_auroc"][best_idx],
+        "early_stopped": epochs_ejec < cfg["training"]["epochs"],
+        "duracion_segundos": round(duracion, 1),
+    }
+    tracker.finalizar(info_modelo, info_entrenamiento, promocion)
 
 
 if __name__ == "__main__":
