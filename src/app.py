@@ -41,6 +41,7 @@ from src.models import (
 )
 from src.model_registry import cargar_registro
 from src.report import build_report_pdf
+from src.image_utils import validar_imagen_radiografia, empaquetar_imagenes_zip
 
 # Transformación de evaluación estándar: sin data augmentation.
 # Los valores de normalización son la media y desviación estándar de ImageNet
@@ -163,8 +164,13 @@ def _compute_grad_cam(
 
 
 def main() -> None:
-    st.set_page_config(page_title="CheXpert Classifier", layout="wide")
-    st.title("Clasificación de Patologías Torácicas")
+    st.set_page_config(page_title="CheXpert Classifier", page_icon="🫁", layout="wide")
+    st.title("🫁 Clasificación de Patologías Torácicas")
+    st.caption(
+        "Apoyo al cribado de patologías torácicas en radiografías frontales mediante "
+        "aprendizaje profundo, con explicabilidad Grad-CAM e informe descargable. "
+        "Herramienta de demostración: no sustituye el criterio de un profesional médico."
+    )
 
     # ==================================================================
     # PASO 1: DESCUBRIR Y SELECCIONAR EL MODELO
@@ -207,14 +213,22 @@ def main() -> None:
         "Umbral de clasificación", min_value=0.0, max_value=1.0,
         value=default_threshold, step=0.01,
     )
-    # Nº de explicaciones Grad-CAM a generar: siempre al menos 5 (o todas si hay menos),
-    # hasta el total de patologías. Cada una añade una pasada de Grad-CAM (coste en CPU).
+    # Tope de paneles Grad-CAM. Se explican las patologías detectadas (prob ≥ umbral);
+    # si hay menos de min_panels, se completa hasta ese mínimo; nunca más que este tope.
+    # Cada panel añade una pasada de Grad-CAM (coste en CPU).
     min_panels = min(5, len(labels))
-    n_panels = st.sidebar.slider(
-        "Nº de explicaciones (Grad-CAM)",
+    max_panels = st.sidebar.slider(
+        "Máximo de paneles (Grad-CAM)",
         min_value=min_panels, max_value=len(labels),
-        value=min_panels, step=1,
+        value=min(8, len(labels)), step=1,
+        help=(
+            "Se muestran las patologías detectadas (prob ≥ umbral); si hay menos de "
+            f"{min_panels}, se completa hasta {min_panels}. Este valor es el tope máximo."
+        ),
     )
+
+    if st.sidebar.button("Limpiar historial", use_container_width=True):
+        st.session_state.history = []
 
     # ==================================================================
     # PASO 3: CARGA DE IMAGEN
@@ -226,8 +240,20 @@ def main() -> None:
         _render_history()
         return
 
-    # Cargar la imagen original en PIL para mostrarla y para GradCAM.
-    img_pil = Image.open(uploaded).convert("RGB")
+    # Validación en el límite de entrada: descarta imágenes inservibles (tamaño/resolución)
+    # y avisa si la imagen no parece una radiografía (en color), antes de gastar cómputo.
+    img_original = Image.open(uploaded)
+    validacion = validar_imagen_radiografia(img_original, n_bytes=getattr(uploaded, "size", None))
+    for _err in validacion["errores"]:
+        st.error(_err)
+    if not validacion["ok"]:
+        _render_history()
+        st.stop()
+    for _aviso in validacion["avisos"]:
+        st.warning(_aviso)
+
+    # Cargar la imagen original en PIL (RGB) para mostrarla y para GradCAM.
+    img_pil = img_original.convert("RGB")
 
     # Redimensionar a 224x224 para la visualización: queremos mostrar la misma
     # resolución que ve el modelo, no la imagen original de alta resolución.
@@ -243,15 +269,40 @@ def main() -> None:
     tensor = _EVAL_TRANSFORM(img_pil).unsqueeze(0)
 
     # ==================================================================
-    # PASO 4: INFERENCIA Y GRADCAM (top-N por probabilidad)
+    # PASO 4: INFERENCIA
     # ==================================================================
     probs = _predict(model, tensor, device)
 
-    # Imagen original en uint8 [0,255] para reutilizarla en cada panel y en el informe.
+    # Imagen original en uint8 [0,255] para reutilizarla en cada panel y en las descargas.
     original_uint8 = (img_np * 255).astype(np.uint8)
+    idx_top = int(np.argmax(probs))
+    # Detectadas en orden de probabilidad descendente (coherente con tabla y gráfica).
+    detected = [labels[i] for i in np.argsort(probs)[::-1] if probs[i] >= threshold]
 
-    # Las N patologías más probables. argsort ascendente + inversión = orden descendente.
-    orden = np.argsort(probs)[::-1][:n_panels]
+    # ==================================================================
+    # PASO 5: RESUMEN
+    # ==================================================================
+    st.divider()
+    st.subheader("Resumen")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Patologías detectadas", f"{len(detected)}/{len(labels)}")
+    c2.metric("Probabilidad máxima", f"{probs[idx_top] * 100:.1f}%")
+    c3.metric("Patología principal", labels[idx_top])
+    c4.metric("Umbral", f"{threshold:.2f}")
+    if detected:
+        st.success(f"Patologías detectadas (umbral {threshold:.2f}): {', '.join(detected)}")
+    else:
+        st.warning(f"Ninguna patología supera el umbral de {threshold:.2f}.")
+
+    # ==================================================================
+    # PASO 6: EXPLICABILIDAD — original (izq.) + Grad-CAM (der.) por patología
+    # ==================================================================
+    # Se explican las patologías DETECTADAS (prob ≥ umbral); si hay menos de min_panels se
+    # completa hasta ese mínimo con las siguientes más probables, sin superar max_panels.
+    # Como las detectadas son siempre las de mayor probabilidad, basta tomar las n_show
+    # primeras del orden descendente. argsort ascendente + inversión = orden descendente.
+    n_show = min(max(len(detected), min_panels), max_panels, len(labels))
+    orden = np.argsort(probs)[::-1][:n_show]
     with st.spinner(f"Generando {len(orden)} mapas Grad-CAM…"):
         panels = []
         for idx in orden:
@@ -266,13 +317,12 @@ def main() -> None:
                 "heatmap": heat,
             })
 
-    # ==================================================================
-    # PASO 5: VISUALIZACIÓN — original (izq.) + Grad-CAM (der.) por patología
-    # ==================================================================
-    st.subheader(f"Explicabilidad visual — {len(panels)} patologías más probables")
+    st.divider()
+    st.subheader(f"Explicabilidad visual — {len(panels)} patologías")
     st.caption(
-        "Izquierda: radiografía original. Derecha: mapa de calor Grad-CAM "
-        "(las zonas cálidas indican mayor influencia en la predicción)."
+        f"Patologías detectadas (prob ≥ umbral), con un mínimo de {min_panels}. "
+        "Izquierda: radiografía original. Derecha: mapa de calor Grad-CAM. "
+        "🔴 rojo = mayor influencia en la predicción · 🔵 azul = menor influencia."
     )
     for p in panels:
         st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
@@ -283,8 +333,9 @@ def main() -> None:
             st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
 
     # ==================================================================
-    # PASO 6: GRÁFICO DE PROBABILIDADES
+    # PASO 7: PROBABILIDADES POR PATOLOGÍA
     # ==================================================================
+    st.divider()
     st.subheader("Probabilidades por patología")
 
     df = pd.DataFrame({
@@ -301,21 +352,26 @@ def main() -> None:
     # nativa de Streamlit: no requiere instalación extra y se renderiza en SVG
     # (vectorial, escalable sin pérdida de calidad).
     # El color verde indica "detectada" (por encima del umbral) y gris "no detectada".
-    chart = (
-        alt.Chart(df_sorted)
-        .mark_bar()
-        .encode(
-            x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
-            y=alt.Y("Patología:N", sort="-x", title=None),
-            color=alt.condition(
-                alt.datum.Detectada,
-                alt.value("#28a745"),    # verde Bootstrap: patología detectada
-                alt.value("#6c757d"),    # gris Bootstrap: no detectada
-            ),
-            tooltip=["Patología", alt.Tooltip("Probabilidad:Q", format=".4f")],
-        )
-        .properties(height=400)
+    # Codificación común (eje X probabilidad, eje Y patología ordenada) compartida por
+    # las barras y por las etiquetas de porcentaje superpuestas.
+    base = alt.Chart(df_sorted).encode(
+        x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
+        y=alt.Y("Patología:N", sort="-x", title=None),
     )
+    barras = base.mark_bar().encode(
+        color=alt.condition(
+            alt.datum.Detectada,
+            alt.value("#28a745"),    # verde Bootstrap: patología detectada
+            alt.value("#6c757d"),    # gris Bootstrap: no detectada
+        ),
+        tooltip=["Patología", alt.Tooltip("Probabilidad:Q", format=".2%")],
+    )
+    # Etiqueta con el porcentaje al final de cada barra. El formato ".1%" multiplica por
+    # 100 y añade el símbolo (p. ej. 0.608 -> "60.8%").
+    etiquetas = base.mark_text(align="left", baseline="middle", dx=3).encode(
+        text=alt.Text("Probabilidad:Q", format=".1%"),
+    )
+    chart = (barras + etiquetas).properties(height=400)
     st.altair_chart(chart, use_container_width=True)
 
     # Tabla numérica detallada, colapsada por defecto para no saturar la interfaz.
@@ -336,13 +392,10 @@ def main() -> None:
         )
 
     # ==================================================================
-    # PASO 7: RESUMEN E INFORME PDF
+    # PASO 8: EXPORTAR (informe PDF + imágenes ZIP)
     # ==================================================================
-    detected = df.loc[df["Detectada"], "Patología"].tolist()
-    if detected:
-        st.success(f"Patologías detectadas (umbral {threshold:.2f}): {', '.join(detected)}")
-    else:
-        st.warning(f"Ninguna patología supera el umbral de {threshold:.2f}.")
+    st.divider()
+    st.subheader("Exportar")
 
     # Informe PDF profesional con tablas, gráfica, paneles original+Grad-CAM y, si el
     # modelo tiene métricas de validación registradas, su fiabilidad. Se genera en
@@ -364,17 +417,28 @@ def main() -> None:
         "panels": panels,
         "metricas_modelo": _collect_model_metrics(info["backbone"], info["class_config"]),
     }
-    pdf_bytes = build_report_pdf(contexto)
-    st.download_button(
-        label="Descargar informe (PDF)",
-        data=pdf_bytes,
-        file_name=f"informe_{Path(uploaded.name).stem}.pdf",
-        mime="application/pdf",
-    )
+    col_pdf, col_zip = st.columns(2)
+    with col_pdf:
+        st.download_button(
+            label="Descargar informe (PDF)",
+            data=build_report_pdf(contexto),
+            file_name=f"informe_{Path(uploaded.name).stem}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    with col_zip:
+        st.download_button(
+            label="Descargar imágenes (ZIP)",
+            data=empaquetar_imagenes_zip(original_uint8, panels),
+            file_name=f"imagenes_{Path(uploaded.name).stem}.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
 
     # ==================================================================
-    # PASO 8: HISTORIAL DE SESIÓN
+    # PASO 9: HISTORIAL DE SESIÓN
     # ==================================================================
+    st.divider()
     # st.session_state persiste entre re-ejecuciones del script (causadas por
     # interacciones del usuario) pero se resetea al recargar la página.
     # Esto permite acumular el historial de análisis de la sesión actual.
@@ -396,11 +460,14 @@ def _render_history() -> None:
     """Muestra el historial de análisis acumulado en la sesión actual."""
     if not st.session_state.get("history"):
         return
+    hist_df = pd.DataFrame(st.session_state.history)
     with st.expander(f"Historial de la sesión ({len(st.session_state.history)} análisis)"):
-        st.dataframe(
-            pd.DataFrame(st.session_state.history),
-            use_container_width=True,
-            hide_index=True,
+        st.dataframe(hist_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Descargar historial (CSV)",
+            data=hist_df.to_csv(index=False).encode("utf-8"),
+            file_name="historial_sesion.csv",
+            mime="text/csv",
         )
 
 
