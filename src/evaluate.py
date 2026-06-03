@@ -26,7 +26,7 @@ from sklearn.metrics import precision_recall_fscore_support, f1_score
 from src.logging_config import get_logger
 from src.models import (
     CheXpertDataset,
-    get_pathology_labels,
+    get_active_pathology_cols,
     load_checkpoint,
     CHEXPERT_COMPETITION_5,
 )
@@ -207,20 +207,31 @@ def _reportar_por_clase(metrics: Dict, labels: List[str], model_name: str) -> No
 
 
 def evaluar_test(
-    cfg: dict, model: torch.nn.Module, device: torch.device, num_classes: int, df_test=None
+    cfg: dict, model: torch.nn.Module, device: torch.device, num_classes: int,
+    df_test=None, labels: Optional[List[str]] = None
 ):
     """
     Evalúa un modelo sobre el test silver-standard.
 
-    Métrica principal de promoción: AUROC media de las 5 patologías oficiales de CheXpert
-    (CHEXPERT_COMPETITION_5), bien representadas en este test. Devuelve la tupla
-    (metrics, y_true, y_pred, y_prob, df_test): el dict de `calcular_metricas_completas`
-    (global + por clase + clases no evaluables) y las predicciones crudas para trazabilidad.
+    Las clases activas se determinan por la configuración de clases (data.class_config),
+    salvo que se pasen explícitamente en 'labels'. Métrica principal de promoción: AUROC
+    media de las 5 patologías oficiales de CheXpert (CHEXPERT_COMPETITION_5), bien
+    representadas en este test. Devuelve la tupla (metrics, y_true, y_pred, y_prob, df_test):
+    el dict de `calcular_metricas_completas` (global + por clase + clases no evaluables) y
+    las predicciones crudas para trazabilidad.
 
     Raises:
         FileNotFoundError: si el valid.csv configurado no existe.
+        ValueError: si el nº de clases del checkpoint no coincide con la class_config.
     """
-    labels = get_pathology_labels(num_classes)
+    if labels is None:
+        labels = get_active_pathology_cols(cfg["data"]["class_config"])
+    if len(labels) != num_classes:
+        raise ValueError(
+            f"El checkpoint tiene {num_classes} clases pero class_config "
+            f"'{cfg['data'].get('class_config')}' define {len(labels)}. "
+            "Indique el class_config correcto en config.yml."
+        )
     loader, df_test = construir_test_loader(cfg, labels, df_test)
     metrics, y_true, y_pred, y_prob = evaluar_loader(model, loader, labels, device, _THRESHOLD)
 
@@ -234,7 +245,8 @@ def evaluar_test(
         f"PR-AUC-macro: {metrics['pr_auc_macro_evaluable']:.4f} | "
         f"F1-macro: {metrics['f1_macro']:.4f} | Accuracy: {metrics['accuracy']:.4f}"
     )
-    _reportar_por_clase(metrics, labels, cfg["model"]["name"])
+    nombre_run = f"{cfg['model']['name']}_{cfg['data'].get('class_config', '')}".rstrip("_")
+    _reportar_por_clase(metrics, labels, nombre_run)
     return metrics, y_true, y_pred, y_prob, df_test
 
 

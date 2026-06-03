@@ -27,11 +27,18 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from src.logging_config import get_logger
-from src.models import CheXpertDataset, build_model, CHEXPERT_PATHOLOGY_COLS, get_pathology_labels
+from src.models import (
+    CheXpertDataset,
+    build_model,
+    CHEXPERT_PATHOLOGY_COLS,
+    get_active_pathology_cols,
+    CLASS_CONFIGS,
+)
 from src.utils import (
     setup_environment,
     set_seed,
     aplicar_filtrado_proyecto,
+    aplicar_seleccion_clases,
     obtener_ruta_absoluta_train,
     construir_df_test_valid,
     contar_parametros,
@@ -75,7 +82,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model", default=None,
         help="Nombre del backbone a usar. Sobreescribe model.name de config.yml."
-             " Soportados: densenet121, resnet50, efficientnet_b0, efficientnet_b4"
+             " Soportados: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny"
+    )
+    parser.add_argument(
+        "--class-config", default=None,
+        help="Configuración de clases: full13, nofracture12 o min5pct9. Sobreescribe data.class_config."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Semilla global. Sobreescribe training.seed de config.yml."
     )
     parser.add_argument(
         "--epochs", type=int, default=None,
@@ -126,17 +141,21 @@ def _fmt(x: Optional[float]) -> str:
 
 
 def _gestionar_promocion(
-    cfg: dict, model_name: str, candidato_path: str, produccion_path: str,
+    cfg: dict, model_name: str, class_config: str, candidato_path: str, produccion_path: str,
     history: dict, test_metrics: dict
 ) -> dict:
     """
     Decide si el modelo recién entrenado reemplaza al mejor modelo en producción.
 
-    Compara la métrica de promoción (AUROC CheXpert-5 sobre el test silver, con F1-macro
-    de desempate) contra el campeón registrado. Promueve el candidato a producción solo
-    si mejora por encima de 'promotion_min_delta'; en caso contrario conserva el modelo
+    El campeón se gestiona por par (backbone, class_config): un modelo solo compite contra
+    el mejor de su misma arquitectura y conjunto de clases (cabezas incompatibles si
+    difieren). Compara la métrica de promoción (AUROC CheXpert-5 sobre el test silver, con
+    F1-macro de desempate) contra el campeón registrado. Promueve el candidato a producción
+    solo si mejora por encima de 'promotion_min_delta'; en caso contrario conserva el modelo
     actual y descarta el candidato. Registra siempre el experimento para auditoría.
     """
+    clave_registro = f"{model_name}_{class_config}"
+
     # El modelo devuelto por train_model corresponde al epoch de mayor AUROC de
     # validación; sus métricas de validación se leen de ese epoch del historial.
     best_idx = int(np.argmax(history["val_auroc"]))
@@ -146,7 +165,7 @@ def _gestionar_promocion(
         "accuracy": history["val_acc"][best_idx],
     }
 
-    campeon = cargar_registro(model_name)
+    campeon = cargar_registro(clave_registro)
     # cargar_registro devuelve el registro completo; es_mejor compara solo las
     # métricas de test (donde está auroc_chexpert5 / f1_macro).
     campeon_test = campeon["test_metrics"] if campeon else None
@@ -156,6 +175,7 @@ def _gestionar_promocion(
     registro = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "backbone": model_name,
+        "class_config": class_config,
         "hiperparametros": {
             "epochs": cfg["training"]["epochs"],
             "learning_rate": cfg["training"]["learning_rate"],
@@ -171,7 +191,7 @@ def _gestionar_promocion(
 
     if promovido:
         promover(candidato_path, produccion_path)
-        guardar_registro(model_name, registro)
+        guardar_registro(clave_registro, registro)
         if campeon is None:
             logger.info(
                 f"NUEVO MEJOR MODELO (primer registro) — AUROC CheXpert-5 (test): "
@@ -216,9 +236,21 @@ def main():
         cfg["model"]["name"] = args.model
     if args.epochs:
         cfg["training"]["epochs"] = args.epochs
+    if args.class_config:
+        cfg["data"]["class_config"] = args.class_config
+    if args.seed is not None:
+        cfg["training"]["seed"] = args.seed
+
+    # La configuración de clases determina las columnas activas y, por tanto, el nº de
+    # salidas del modelo. num_classes se deriva de aquí (no del valor estático de config).
+    class_config = cfg["data"]["class_config"]
+    active_cols = get_active_pathology_cols(class_config)
+    modo_anti_ruido = CLASS_CONFIGS[class_config]["anti_ruido"]
+    cfg["model"]["num_classes"] = len(active_cols)
 
     logger.info(
         f"Configuración cargada: backbone={cfg['model']['name']}, "
+        f"class_config={class_config} ({len(active_cols)} clases), "
         f"épocas={cfg['training']['epochs']}, batch={cfg['training']['batch_size']}"
     )
 
@@ -260,6 +292,12 @@ def main():
     # necesita etiquetas binarias y la ausencia de evaluación es la señal
     # más débil posible, comparable a un negativo implícito.
     df[CHEXPERT_PATHOLOGY_COLS] = df[CHEXPERT_PATHOLOGY_COLS].fillna(0.0)
+
+    # Segundo filtrado: selección de clases activas + eliminación anti-ruido de estudios
+    # huérfanos. Solo afecta al conjunto train/val; el test conserva todas sus imágenes.
+    df, seleccion_reporte = aplicar_seleccion_clases(
+        df, active_cols, CHEXPERT_PATHOLOGY_COLS, modo_anti_ruido
+    )
 
     # ==================================================================
     # Transforms
@@ -310,21 +348,21 @@ def main():
         logger.info(f"Subconjunto de validación aplicado: usando {len(val_idx)} imágenes de validación")
 
     # Conjunto de test silver-standard (valid de Stanford). Se construye una vez aquí y
-    # se reutiliza para documentar su distribución y para la evaluación final.
-    pathology_labels = get_pathology_labels(cfg["model"]["num_classes"])
+    # se reutiliza para documentar su distribución y para la evaluación final. Usa las
+    # clases activas: en el test se reducen columnas pero no se eliminan imágenes.
     df_test = construir_df_test_valid(
-        cfg["data"]["test_csv_path"], cfg["data"]["test_images_root"], pathology_labels
+        cfg["data"]["test_csv_path"], cfg["data"]["test_images_root"], active_cols
     )
 
     train_ds = CheXpertDataset(
         df.loc[train_idx].reset_index(drop=True),
         transform=train_tf,
-        etiquetas_cols=CHEXPERT_PATHOLOGY_COLS,
+        etiquetas_cols=active_cols,
     )
     val_ds = CheXpertDataset(
         df.loc[val_idx].reset_index(drop=True),
         transform=eval_tf,
-        etiquetas_cols=CHEXPERT_PATHOLOGY_COLS,
+        etiquetas_cols=active_cols,
     )
 
     train_loader = DataLoader(
@@ -369,7 +407,7 @@ def main():
     # el modelo les preste tanta atención como a los negativos.
     # BCEWithLogitsLoss acepta pos_weight directamente: multiplica la pérdida
     # de los positivos de cada clase por su peso correspondiente.
-    y_train_labels = df.loc[train_idx, CHEXPERT_PATHOLOGY_COLS].values
+    y_train_labels = df.loc[train_idx, active_cols].values
     neg = (y_train_labels == 0).sum(axis=0)
     pos = (y_train_labels == 1).sum(axis=0) + 1e-6   # +1e-6 evita división por cero en clases sin positivos
     pos_weight_arr = neg / pos
@@ -385,16 +423,17 @@ def main():
         optimizer, patience=cfg["training"]["scheduler_patience"]
     )
 
-    # El checkpoint se nombra con el backbone para no mezclar arquitecturas distintas.
-    # Las ejecuciones de prueba (--subset / --val-subset) guardan con sufijo '_subset' y
-    # nunca tocan producción. Los entrenamientos reales guardan primero un checkpoint
-    # CANDIDATO y solo se promueve a producción si supera al mejor modelo registrado.
-    produccion_path = f"models/mejor_modelo_{model_name}.pth"
+    # El checkpoint se nombra con el backbone y la configuración de clases para no mezclar
+    # arquitecturas ni conjuntos de clases distintos. Las ejecuciones de prueba
+    # (--subset / --val-subset) guardan con sufijo '_subset' y nunca tocan producción. Los
+    # entrenamientos reales guardan primero un checkpoint CANDIDATO y solo se promueve a
+    # producción si supera al mejor modelo registrado para ese par (backbone, class_config).
+    produccion_path = f"models/mejor_modelo_{model_name}_{class_config}.pth"
     if es_prueba:
-        save_path = f"models/mejor_modelo_{model_name}_subset.pth"
+        save_path = f"models/mejor_modelo_{model_name}_{class_config}_subset.pth"
         logger.info("Ejecución de prueba: no se promociona ni se sobrescribe el modelo de producción.")
     else:
-        save_path = f"models/_candidato_{model_name}.pth"
+        save_path = f"models/_candidato_{model_name}_{class_config}.pth"
     logger.info(f"Backbone: {model_name} — checkpoint de este run: {save_path}")
 
     # Documentar la composición de los conjuntos en el experimento.
@@ -405,6 +444,8 @@ def main():
         "test_csv_path": cfg["data"]["test_csv_path"],
         "train_split": cfg["data"]["train_split"],
         "seed": cfg["training"]["seed"],
+        "class_config": class_config,
+        "seleccion_clases": seleccion_reporte,
         "filtros": "Frontal+AP, valores {0,1,NaN}, sin inconsistencias No Finding, sexo M/F",
         "n_pacientes_train": int(df.loc[train_idx, "Patient"].nunique()),
         "n_pacientes_val": int(df.loc[val_idx, "Patient"].nunique()),
@@ -416,11 +457,11 @@ def main():
     }
     tracker.registrar_datasets(
         y_train_labels,
-        df.loc[val_idx, CHEXPERT_PATHOLOGY_COLS].values,
-        df_test[pathology_labels].values,
-        pathology_labels,
+        df.loc[val_idx, active_cols].values,
+        df_test[active_cols].values,
+        active_cols,
         etl_reporte,
-        {lab: float(v) for lab, v in zip(CHEXPERT_PATHOLOGY_COLS, pos_weight_arr)},
+        {lab: float(v) for lab, v in zip(active_cols, pos_weight_arr)},
         provenance,
     )
 
@@ -441,19 +482,19 @@ def main():
     # Evaluación del mejor modelo (validación y test silver-standard)
     # ==================================================================
     # Validación: predicciones limpias del mejor modelo para el informe (una pasada).
-    val_metrics, yt_v, yp_v, ypr_v = evaluar_loader(model, val_loader, pathology_labels, device)
+    val_metrics, yt_v, yp_v, ypr_v = evaluar_loader(model, val_loader, active_cols, device)
     tracker.registrar_evaluacion(
-        "val", val_metrics, yt_v, yp_v, ypr_v, pathology_labels,
+        "val", val_metrics, yt_v, yp_v, ypr_v, active_cols,
         df.loc[val_idx, "Ruta_Absoluta"].tolist(),
     )
 
     # Test silver-standard: independiente del train (pacientes disjuntos); sus métricas
     # alimentan el gate de promoción y el informe.
     test_metrics, yt_t, yp_t, ypr_t, df_test = evaluar_test(
-        cfg, model, device, cfg["model"]["num_classes"], df_test=df_test
+        cfg, model, device, cfg["model"]["num_classes"], df_test=df_test, labels=active_cols
     )
     tracker.registrar_evaluacion(
-        "test", test_metrics, yt_t, yp_t, ypr_t, pathology_labels,
+        "test", test_metrics, yt_t, yp_t, ypr_t, active_cols,
         df_test["Ruta_Absoluta"].tolist(),
     )
 
@@ -471,7 +512,7 @@ def main():
         promocion = {"promovido": False, "motivo": "ejecución de prueba"}
     else:
         promocion = _gestionar_promocion(
-            cfg, model_name, save_path, produccion_path, history, test_scalars
+            cfg, model_name, class_config, save_path, produccion_path, history, test_scalars
         )
 
     # ==================================================================
@@ -487,6 +528,7 @@ def main():
         ckpt = None  # candidato descartado por no superar al campeón
     info_modelo = {
         "backbone": model_name,
+        "class_config": class_config,
         "num_classes": cfg["model"]["num_classes"],
         "dropout": cfg["model"]["dropout"],
         "hidden_units": cfg["model"]["hidden_units"],

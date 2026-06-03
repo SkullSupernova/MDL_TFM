@@ -10,7 +10,7 @@
 # El diseño permite cambiar el backbone (DenseNet, ResNet, EfficientNet) editando
 # solo config.yml, sin tocar ningún archivo de código.
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import torch
@@ -51,6 +51,43 @@ CHEXPERT_PATHOLOGY_COLS_14: List[str] = [
 CHEXPERT_COMPETITION_5: List[str] = [
     'Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Pleural Effusion'
 ]
+
+# Configuraciones de clases seleccionables por experimento (config-driven).
+# Cada configuración fija EXPLÍCITAMENTE sus clases activas —derivadas de la lista
+# canónica de 13 para evitar divergencias de nomenclatura— y la política anti-ruido
+# de eliminación de estudios cuyas únicas etiquetas positivas pertenecen a clases
+# descartadas (convertirlos en negativos introduciría ruido de etiqueta):
+#   - "ninguno":       no se elimina ningún estudio (no hay clases descartadas).
+#   - "orfanos":       elimina estudios cuya ÚNICA etiqueta positiva era de una clase
+#                      descartada (no toca estudios ya sin positivos en full13).
+#   - "sin_positivos": elimina todo estudio que quede sin ninguna etiqueta positiva
+#                      en las clases activas (incluye los ya negativos en origen).
+_NOFRACTURE_EXCLUIDAS = ("Fracture",)
+_MIN5PCT_EXCLUIDAS = ("Enlarged Cardiomediastinum", "Lung Lesion", "Pneumonia", "Fracture")
+
+CLASS_CONFIGS: Dict[str, Dict] = {
+    "full13": {
+        "cols": list(CHEXPERT_PATHOLOGY_COLS),
+        "anti_ruido": "ninguno",
+    },
+    "nofracture12": {
+        "cols": [c for c in CHEXPERT_PATHOLOGY_COLS if c not in _NOFRACTURE_EXCLUIDAS],
+        "anti_ruido": "orfanos",
+    },
+    "min5pct9": {
+        "cols": [c for c in CHEXPERT_PATHOLOGY_COLS if c not in _MIN5PCT_EXCLUIDAS],
+        "anti_ruido": "sin_positivos",
+    },
+}
+
+
+def get_active_pathology_cols(class_config: str) -> List[str]:
+    """Devuelve las columnas de patología activas para una configuración de clases."""
+    if class_config not in CLASS_CONFIGS:
+        raise ValueError(
+            f"class_config '{class_config}' no definido. Opciones: {list(CLASS_CONFIGS)}"
+        )
+    return list(CLASS_CONFIGS[class_config]["cols"])
 
 
 def get_pathology_labels(num_classes: int) -> List[str]:
@@ -140,7 +177,9 @@ class CheXpertDataset(Dataset):
 
 # Backbones soportados. Añadir uno nuevo requiere un bloque elif en build_model()
 # y una entrada en get_grad_cam_layer().
-SUPPORTED_MODELS = ("densenet121", "resnet50", "efficientnet_b0", "efficientnet_b4")
+SUPPORTED_MODELS = (
+    "densenet121", "vgg16", "resnet50", "efficientnet_b0", "efficientnet_b4", "convnext_tiny"
+)
 
 
 def _classifier_head(
@@ -168,7 +207,7 @@ def build_model(
     pretrained: bool = True,
 ) -> nn.Module:
     """Generic multilabel classifier builder.
-    Supported backbones: densenet121, resnet50, efficientnet_b0, efficientnet_b4."""
+    Supported backbones: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny."""
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(f"'{model_name}' no soportado. Elige entre {SUPPORTED_MODELS}")
 
@@ -185,6 +224,14 @@ def build_model(
         base.classifier = _classifier_head(
             base.classifier.in_features, hidden_units, dropout, num_classes
         )
+    elif model_name == "vgg16":
+        # VGG-16: red secuencial clásica (pila de convoluciones sin conexiones de
+        # salto). Su clasificador es una secuencia cuya última capa (índice -1) es
+        # el Linear de salida.
+        base = tv_models.vgg16(weights=weights)
+        base.classifier[-1] = _classifier_head(
+            base.classifier[-1].in_features, hidden_units, dropout, num_classes
+        )
     elif model_name == "resnet50":
         # ResNet-50: red con conexiones residuales (skip connections). Su capa
         # de clasificación final se llama 'fc' (fully connected).
@@ -196,6 +243,13 @@ def build_model(
         # EfficientNet: familia de redes diseñadas por escalado compuesto.
         # Su clasificador es una secuencia; la última capa (índice -1) es el Linear.
         base = getattr(tv_models, model_name)(weights=weights)
+        base.classifier[-1] = _classifier_head(
+            base.classifier[-1].in_features, hidden_units, dropout, num_classes
+        )
+    elif model_name == "convnext_tiny":
+        # ConvNeXt-Tiny: CNN moderna inspirada en transformers. Su clasificador es
+        # LayerNorm → Flatten → Linear; la última capa (índice -1) es el Linear.
+        base = tv_models.convnext_tiny(weights=weights)
         base.classifier[-1] = _classifier_head(
             base.classifier[-1].in_features, hidden_units, dropout, num_classes
         )
@@ -221,10 +275,14 @@ def _has_simple_head(state: dict, model_name: str) -> bool:
     # lo que corresponde a _classifier_head (índice 0 = primer Linear).
     if model_name == "densenet121":
         return "classifier.weight" in state and "classifier.0.weight" not in state
+    if model_name == "vgg16":
+        return "classifier.6.weight" in state and "classifier.6.0.weight" not in state
     if model_name == "resnet50":
         return "fc.weight" in state and "fc.0.weight" not in state
     if model_name.startswith("efficientnet"):
         return "classifier.1.weight" in state and "classifier.1.0.weight" not in state
+    if model_name == "convnext_tiny":
+        return "classifier.2.weight" in state and "classifier.2.0.weight" not in state
     return False
 
 
@@ -240,11 +298,17 @@ def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
     if model_name == "densenet121":
         base = tv_models.densenet121(weights=None)
         base.classifier = nn.Linear(base.classifier.in_features, num_classes)
+    elif model_name == "vgg16":
+        base = tv_models.vgg16(weights=None)
+        base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
     elif model_name == "resnet50":
         base = tv_models.resnet50(weights=None)
         base.fc = nn.Linear(base.fc.in_features, num_classes)
     elif model_name.startswith("efficientnet"):
         base = getattr(tv_models, model_name)(weights=None)
+        base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
+    elif model_name == "convnext_tiny":
+        base = tv_models.convnext_tiny(weights=None)
         base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
     else:
         raise ValueError(f"'{model_name}' no soportado")
@@ -266,8 +330,10 @@ def _infer_num_classes(state: dict, model_name: str) -> int:
     # Se prueban primero las claves de la cabeza compleja (_classifier_head, índice 3)
     # antes que las de la cabeza simple, para mayor precisión en la detección.
     candidates: dict[str, list[str]] = {
-        "densenet121": ["classifier.3.weight", "classifier.weight"],
-        "resnet50":    ["fc.3.weight",          "fc.weight"],
+        "densenet121":   ["classifier.3.weight",   "classifier.weight"],
+        "vgg16":         ["classifier.6.3.weight", "classifier.6.weight"],
+        "resnet50":      ["fc.3.weight",            "fc.weight"],
+        "convnext_tiny": ["classifier.2.3.weight", "classifier.2.weight"],
     }
     if model_name in candidates:
         for key in candidates[model_name]:
@@ -360,8 +426,14 @@ def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
     # de más alto nivel (las más relacionadas con la clase a explicar).
     if model_name == "densenet121":
         return [model.features[-1]]    # DenseBlock4 + BatchNorm2d final
+    if model_name == "vgg16":
+        # features termina en MaxPool2d; se busca la última Conv2d real de la pila.
+        convs = [m for m in model.features if isinstance(m, nn.Conv2d)]
+        return [convs[-1]]
     if model_name == "resnet50":
         return [model.layer4[-1]]      # último BasicBlock/Bottleneck
     if model_name.startswith("efficientnet"):
         return [model.features[-1]]    # último bloque MBConv
+    if model_name == "convnext_tiny":
+        return [model.features[-1]]    # última etapa CNBlock
     raise ValueError(f"No hay capa GradCAM definida para '{model_name}'")

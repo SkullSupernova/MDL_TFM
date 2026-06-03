@@ -512,6 +512,89 @@ def aplicar_filtrado_proyecto(df_ini: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[
     )
 
 
+def aplicar_seleccion_clases(
+    df: pd.DataFrame,
+    clases_activas: List[str],
+    clases_totales: List[str],
+    modo_anti_ruido: str = "orfanos",
+) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Segundo filtrado: reduce el conjunto a las clases activas y elimina los estudios
+    que quedarían sin ninguna etiqueta positiva como consecuencia de descartar clases.
+
+    No modifica las columnas del DataFrame (las clases descartadas se ignoran aguas
+    abajo vía etiquetas_cols); solo filtra filas. Pensada para el conjunto de
+    entrenamiento/validación: el test no debe perder imágenes, solo columnas.
+
+    Parámetros
+    ----------
+    df : pd.DataFrame
+        DataFrame con las columnas de patología en formato binario (0.0/1.0). Los NaN
+        deben haberse imputado a 0.0 antes de invocar esta función.
+    clases_activas : list of str
+        Columnas de patología que el modelo conservará.
+    clases_totales : list of str
+        Conjunto completo de columnas antes de la selección; su diferencia con
+        clases_activas son las clases descartadas.
+    modo_anti_ruido : {'ninguno', 'orfanos', 'sin_positivos'}
+        - 'ninguno': no elimina ninguna fila.
+        - 'orfanos': elimina filas cuya única etiqueta positiva pertenecía a una clase
+          descartada (evita convertir un positivo real en un falso negativo).
+        - 'sin_positivos': elimina toda fila sin ninguna etiqueta positiva en las
+          clases activas (incluye las que ya eran negativas en origen).
+
+    Devuelve
+    --------
+    df_filtrado : pd.DataFrame con el índice reseteado.
+    reporte : dict con clases activas/descartadas, modo y conteos de estudios.
+
+    Raises
+    ------
+    ValueError: si modo_anti_ruido no es un valor reconocido.
+
+    Ejemplo
+    -------
+    >>> df2, rep = aplicar_seleccion_clases(df, cols_12, CHEXPERT_PATHOLOGY_COLS, "orfanos")
+    """
+    if modo_anti_ruido not in ("ninguno", "orfanos", "sin_positivos"):
+        raise ValueError(
+            f"modo_anti_ruido '{modo_anti_ruido}' no válido. "
+            "Use 'ninguno', 'orfanos' o 'sin_positivos'."
+        )
+
+    clases_descartadas = [c for c in clases_totales if c not in clases_activas]
+    total_antes = len(df)
+
+    if modo_anti_ruido == "ninguno" or not clases_descartadas:
+        df_filtrado = df.reset_index(drop=True)
+        eliminados = 0
+    else:
+        tiene_activa = (df[clases_activas] == 1.0).any(axis=1)
+        if modo_anti_ruido == "orfanos":
+            tenia_descartada = (df[clases_descartadas] == 1.0).any(axis=1)
+            quitar = tenia_descartada & ~tiene_activa
+        else:  # sin_positivos
+            quitar = ~tiene_activa
+        df_filtrado = df[~quitar].reset_index(drop=True)
+        eliminados = int(quitar.sum())
+
+    reporte = {
+        "clases_activas": list(clases_activas),
+        "clases_descartadas": clases_descartadas,
+        "modo_anti_ruido": modo_anti_ruido,
+        "estudios_antes": total_antes,
+        "estudios_eliminados": eliminados,
+        "estudios_despues": len(df_filtrado),
+    }
+    logger.info(
+        f"Selección de clases: {len(clases_activas)} activas, "
+        f"{len(clases_descartadas)} descartadas ({clases_descartadas or '—'}); "
+        f"estudios {total_antes} -> {len(df_filtrado)} "
+        f"(eliminados {eliminados}, modo={modo_anti_ruido})."
+    )
+    return df_filtrado, reporte
+
+
 def auditar_dataset(df: pd.DataFrame, columnas_auditar: Optional[List[str]] = None) -> None:
     """
     Genera un reporte de auditoría en formato Markdown mostrando el total de

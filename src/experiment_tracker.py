@@ -94,8 +94,10 @@ class ExperimentTracker:
     def __init__(self, cfg: dict, tag: Optional[str] = None, device: Optional[torch.device] = None):
         root = Path(cfg.get("experiments", {}).get("root", "experiments"))
         backbone = cfg["model"]["name"]
+        class_config = cfg.get("data", {}).get("class_config", "")
+        cfg_slug = f"_{class_config}" if class_config else ""
         tag_slug = "_" + re.sub(r"[^A-Za-z0-9.-]+", "-", tag) if tag else ""
-        self.run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{backbone}{tag_slug}"
+        self.run_id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}_{backbone}{cfg_slug}{tag_slug}"
         self.dir = root / self.run_id
         (self.dir / "predictions").mkdir(parents=True, exist_ok=True)
         (self.dir / "error_analysis").mkdir(parents=True, exist_ok=True)
@@ -270,6 +272,7 @@ class ExperimentTracker:
             "run_id": self.run_id,
             "timestamp": self.manifest["inicio"],
             "backbone": self.cfg["model"]["name"],
+            "class_config": self.cfg.get("data", {}).get("class_config", ""),
             "tag": self.tag or "",
             "epochs_ejecutadas": ent.get("epochs_ejecutadas"),
             "lr": ent.get("learning_rate"),
@@ -302,7 +305,8 @@ class ExperimentTracker:
         test = self.metrics.get("test", {})
         lineas += [
             "## Resumen ejecutivo", "",
-            f"- **Backbone:** {m['modelo'].get('backbone')} ({m['modelo'].get('num_classes')} clases)",
+            f"- **Backbone:** {m['modelo'].get('backbone')} ({m['modelo'].get('num_classes')} clases) · "
+            f"**Config de clases:** {m['modelo'].get('class_config', 'n/a')}",
             f"- **AUROC CheXpert-5 (test):** {_fmt(test.get('auroc_chexpert5'))} · "
             f"**PR-AUC-macro:** {_fmt(test.get('pr_auc_macro_evaluable'))} · "
             f"**F1-macro:** {_fmt(test.get('f1_macro'))}",

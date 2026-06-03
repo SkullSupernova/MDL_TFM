@@ -8,7 +8,9 @@ from src.utils import (
     EarlyStopping,
     ModelCheckpoint,
     filtrar_chexpert_dataset,
+    aplicar_seleccion_clases,
 )
+from src.models import CHEXPERT_PATHOLOGY_COLS, get_active_pathology_cols
 
 
 # =========================================================
@@ -216,3 +218,87 @@ def test_filtrar_reporte_contiene_claves_esperadas():
     expected = {'total_original', 'total_final', 'total_perdido',
                 'porcentaje_retencion', 'porcentaje_perdido'}
     assert expected.issubset(reporte.keys())
+
+
+# =========================================================
+# aplicar_seleccion_clases — happy path
+# =========================================================
+
+def _df_etiquetas(filas):
+    """Construye un DataFrame con las 13 columnas; las no indicadas valen 0.0."""
+    rows = []
+    for f in filas:
+        row = {c: 0.0 for c in CHEXPERT_PATHOLOGY_COLS}
+        row.update(f)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def test_seleccion_full13_modo_ninguno_no_elimina():
+    df = _df_etiquetas([{"Fracture": 1.0}, {"Cardiomegaly": 1.0}, {}])
+    df_out, rep = aplicar_seleccion_clases(
+        df, CHEXPERT_PATHOLOGY_COLS, CHEXPERT_PATHOLOGY_COLS, "ninguno"
+    )
+    assert len(df_out) == 3
+    assert rep["estudios_eliminados"] == 0
+    assert rep["clases_descartadas"] == []
+
+
+def test_seleccion_nofracture12_orfanos_elimina_solo_fracture_only():
+    activas = get_active_pathology_cols("nofracture12")   # 12, sin Fracture
+    df = _df_etiquetas([
+        {"Fracture": 1.0},                       # Fracture-only -> se elimina
+        {"Fracture": 1.0, "Cardiomegaly": 1.0},  # tiene positivo activo -> se conserva
+        {"Cardiomegaly": 1.0},                   # se conserva
+        {},                                      # ya negativo en origen -> orfanos no lo elimina
+    ])
+    df_out, rep = aplicar_seleccion_clases(df, activas, CHEXPERT_PATHOLOGY_COLS, "orfanos")
+    assert rep["estudios_eliminados"] == 1
+    assert len(df_out) == 3
+    assert rep["clases_descartadas"] == ["Fracture"]
+
+
+# =========================================================
+# aplicar_seleccion_clases — edge cases
+# =========================================================
+
+def test_seleccion_min5pct9_sin_positivos_elimina_tambien_negativos_de_origen():
+    activas = get_active_pathology_cols("min5pct9")   # 9
+    df = _df_etiquetas([
+        {"Pneumonia": 1.0},      # solo positivo en clase descartada -> se elimina
+        {},                      # negativo de origen -> sin_positivos también lo elimina
+        {"Cardiomegaly": 1.0},   # positivo activo -> se conserva
+    ])
+    df_out, rep = aplicar_seleccion_clases(df, activas, CHEXPERT_PATHOLOGY_COLS, "sin_positivos")
+    assert rep["estudios_eliminados"] == 2
+    assert len(df_out) == 1
+
+
+def test_seleccion_df_vacio_no_lanza():
+    df = _df_etiquetas([]).reindex(columns=CHEXPERT_PATHOLOGY_COLS)
+    activas = get_active_pathology_cols("nofracture12")
+    df_out, rep = aplicar_seleccion_clases(df, activas, CHEXPERT_PATHOLOGY_COLS, "orfanos")
+    assert len(df_out) == 0
+    assert rep["estudios_eliminados"] == 0
+
+
+def test_seleccion_reporte_contiene_claves_esperadas():
+    df = _df_etiquetas([{"Cardiomegaly": 1.0}])
+    _, rep = aplicar_seleccion_clases(
+        df, get_active_pathology_cols("nofracture12"), CHEXPERT_PATHOLOGY_COLS, "orfanos"
+    )
+    esperadas = {"clases_activas", "clases_descartadas", "modo_anti_ruido",
+                 "estudios_antes", "estudios_eliminados", "estudios_despues"}
+    assert esperadas.issubset(rep.keys())
+
+
+# =========================================================
+# aplicar_seleccion_clases — errores
+# =========================================================
+
+def test_seleccion_modo_invalido_lanza_valueerror():
+    df = _df_etiquetas([{"Cardiomegaly": 1.0}])
+    with pytest.raises(ValueError, match="modo_anti_ruido"):
+        aplicar_seleccion_clases(
+            df, get_active_pathology_cols("nofracture12"), CHEXPERT_PATHOLOGY_COLS, "desconocido"
+        )

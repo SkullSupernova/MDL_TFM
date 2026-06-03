@@ -7,6 +7,15 @@ data:
     - "CheXpert-v1.0 batch 4 (train 3)"
   img_size: 224
   train_split: 0.9
+  # Configuración de clases activas del experimento. Selecciona qué patologías entrena
+  # y evalúa el modelo, y se refleja en el nombre del run y del checkpoint. La definición
+  # canónica (columnas activas + política anti-ruido) vive en src/models.py (CLASS_CONFIGS);
+  # aquí solo se elige cuál usar:
+  #   full13       -> 13 clases (referencia). Sin eliminación de estudios.
+  #   nofracture12 -> 12 (sin Fracture). Elimina estudios cuya única etiqueta positiva era Fracture.
+  #   min5pct9     ->  9 (sin Enlarged Cardiomediastinum, Lung Lesion, Pneumonia, Fracture;
+  #                   las de prevalencia <5%). Elimina estudios sin ninguna etiqueta positiva en las 9.
+  class_config: "full13"
   # Conjunto de test "silver standard": el valid oficial de Stanford (anotado por
   # radiólogos). Es independiente del train (pacientes disjuntos) y no participa en
   # la selección del modelo. test_images_root es la carpeta que contiene 'valid/'.
@@ -14,8 +23,8 @@ data:
   test_images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)"
 
 model:
-  name: "densenet121"          # soportados: densenet121, resnet50, efficientnet_b0, efficientnet_b4
-  num_classes: 13
+  name: "densenet121"          # soportados: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny
+  num_classes: 13              # valor de referencia (full13); main.py lo deriva de data.class_config
   dropout: 0.5
   hidden_units: 1024
   pretrained: true

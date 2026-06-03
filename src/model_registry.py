@@ -4,9 +4,11 @@ Registro de modelos y gate de promoción del "mejor modelo".
 Mantiene dos artefactos para que un nuevo entrenamiento solo reemplace al modelo de
 producción cuando mejora de forma objetiva, y para poder auditar el proceso:
 
-- Registro del campeón (`models/best_model_registry.json`): por backbone, las métricas
-  del modelo actualmente en producción y sus hiperparámetros. Es la referencia contra
-  la que se compara cada nuevo entrenamiento.
+- Registro del campeón (`models/best_model_registry.json`): por par (backbone,
+  class_config), las métricas del modelo actualmente en producción y sus hiperparámetros.
+  Es la referencia contra la que se compara cada nuevo entrenamiento. La clave incluye la
+  configuración de clases porque modelos con distinto nº de clases tienen cabezas
+  incompatibles y no deben competir por la misma plaza de campeón.
 - Historial de experimentos (`logs/experiments.jsonl`): una línea JSON por entrenamiento
   real (append-only), para auditoría posterior.
 
@@ -31,13 +33,13 @@ _METRICA_PRIMARIA = "auroc_chexpert5"
 _METRICA_DESEMPATE = "f1_macro"
 
 
-def cargar_registro(backbone: str, ruta: Path = RUTA_REGISTRO) -> Optional[dict]:
-    """Devuelve el registro del campeón para un backbone, o None si no existe."""
+def cargar_registro(clave: str, ruta: Path = RUTA_REGISTRO) -> Optional[dict]:
+    """Devuelve el registro del campeón para una clave (backbone_classconfig), o None."""
     if not Path(ruta).exists():
         return None
     with open(ruta, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data.get(backbone)
+    return data.get(clave)
 
 
 def es_mejor(nuevas: Dict, campeon: Optional[Dict], min_delta: float = 0.0) -> bool:
@@ -68,14 +70,14 @@ def es_mejor(nuevas: Dict, campeon: Optional[Dict], min_delta: float = 0.0) -> b
     return nuevas.get(_METRICA_DESEMPATE, 0.0) > campeon.get(_METRICA_DESEMPATE, 0.0)
 
 
-def guardar_registro(backbone: str, registro: dict, ruta: Path = RUTA_REGISTRO) -> None:
-    """Actualiza (o crea) la entrada del backbone en el registro de campeones."""
+def guardar_registro(clave: str, registro: dict, ruta: Path = RUTA_REGISTRO) -> None:
+    """Actualiza (o crea) la entrada de la clave (backbone_classconfig) en el registro."""
     Path(ruta).parent.mkdir(parents=True, exist_ok=True)
     data = {}
     if Path(ruta).exists():
         with open(ruta, "r", encoding="utf-8") as f:
             data = json.load(f)
-    data[backbone] = registro
+    data[clave] = registro
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
