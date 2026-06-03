@@ -1,6 +1,6 @@
 data:
   csv_path: "chexpert_csv/train_cheXbert.csv"
-  images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408"
+  images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408_224"
   batches:
     - "CheXpert-v1.0 batch 2 (train 1)"
     - "CheXpert-v1.0 batch 3 (train 2)"
@@ -20,7 +20,7 @@ data:
   # radiólogos). Es independiente del train (pacientes disjuntos) y no participa en
   # la selección del modelo. test_images_root es la carpeta que contiene 'valid/'.
   test_csv_path: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)/valid.csv"
-  test_images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)"
+  test_images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)_224"
 
 model:
   name: "densenet121"          # soportados: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny
