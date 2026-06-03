@@ -2,15 +2,16 @@
 Aplicación web interactiva para clasificación multietiqueta de patologías torácicas.
 
 Interfaz Streamlit que permite cargar una radiografía, seleccionar el modelo activo,
-visualizar las probabilidades por patología con GradCAM y exportar los resultados.
+visualizar las probabilidades por patología, comparar la imagen original con el mapa de
+calor Grad-CAM de las clases más probables y descargar un informe PDF profesional.
 
 Uso:
     streamlit run src/app.py
 """
 
-import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Streamlit modifica sys.path al arrancar: añade el directorio que contiene el script
 # (es decir, 'src/') a sys.path. Eso rompe los imports 'from src.x import ...' porque
@@ -31,7 +32,15 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from torchvision import transforms
 
-from src.models import get_grad_cam_layer, get_pathology_labels, load_checkpoint
+from src.models import (
+    get_active_pathology_cols,
+    get_grad_cam_layer,
+    get_pathology_labels,
+    load_checkpoint,
+    parse_checkpoint_filename,
+)
+from src.model_registry import cargar_registro
+from src.report import build_report_pdf
 
 # Transformación de evaluación estándar: sin data augmentation.
 # Los valores de normalización son la media y desviación estándar de ImageNet
@@ -45,49 +54,49 @@ _EVAL_TRANSFORM = transforms.Compose([
 ])
 
 
-def _discover_models() -> dict[str, str]:
+def _discover_models() -> dict[str, dict]:
     """
-    Busca checkpoints disponibles en el directorio models/.
+    Busca checkpoints de producción en models/ y deduce su backbone y class_config.
 
-    Devuelve un diccionario {etiqueta_display: ruta_str}. La etiqueta se extrae
-    del patrón mejor_modelo_<name>.pth; si el nombre no sigue el patrón se usa
-    el stem completo del fichero.
+    Solo considera los checkpoints de producción (`mejor_modelo_*.pth`), ignorando
+    candidatos (`_candidato_*`) y los de smoke test (`*_subset`). Devuelve
+    {etiqueta_display: {"path", "backbone", "class_config"}}; class_config es None
+    para checkpoints en el formato anterior (sin configuración de clases en el nombre).
     """
     models_dir = Path("models")
     result = {}
     if not models_dir.exists():
         return result
-    for p in sorted(models_dir.glob("*.pth")):
-        # Extraer el nombre del backbone del patrón convencional del proyecto.
-        # Ejemplo: "mejor_modelo_densenet121.pth" → etiqueta "densenet121".
-        # Si el archivo no sigue el patrón (p.ej. un checkpoint externo), se usa
-        # el nombre completo del archivo sin extensión como etiqueta de fallback.
-        m = re.match(r"mejor_modelo_(.+)\.pth", p.name)
-        label = m.group(1) if m else p.stem
-        result[label] = str(p)
+    for p in sorted(models_dir.glob("mejor_modelo_*.pth")):
+        if p.stem.endswith("_subset"):
+            continue  # checkpoint de smoke test, no es de producción
+        backbone, class_config = parse_checkpoint_filename(p.name)
+        label = f"{backbone} · {class_config}" if class_config else backbone
+        result[label] = {"path": str(p), "backbone": backbone, "class_config": class_config}
     return result
 
 
 @st.cache_resource
-def _load_model(checkpoint_path: str, model_name: str):
+def _load_model(checkpoint_path: str, backbone: str, class_config: Optional[str]):
     """
-    Carga el modelo desde el checkpoint indicado.
+    Carga el modelo desde el checkpoint indicado y resuelve sus etiquetas de clase.
 
-    El par (checkpoint_path, model_name) actúa como clave de caché: Streamlit
-    mantiene una instancia cargada por modelo y no recarga entre interacciones.
+    La terna (checkpoint_path, backbone, class_config) actúa como clave de caché:
+    Streamlit mantiene una instancia cargada por modelo y no recarga entre interacciones.
+    Las etiquetas se derivan de class_config cuando está disponible; en checkpoints en
+    formato antiguo (class_config None) se infieren del número de salidas del modelo.
     """
     # @st.cache_resource es el mecanismo de Streamlit para recursos costosos.
     # Streamlit re-ejecuta todo el script en cada interacción del usuario (slider,
     # botón, upload). Sin caché, el modelo se cargaría de nuevo en cada clic.
-    # Con caché, se carga solo una vez y se reutiliza mientras la app esté activa.
-    # La clave de caché son los argumentos de la función, por lo que si el usuario
-    # cambia el modelo (checkpoint_path diferente), se carga el nuevo modelo.
     with open("config/config.yml", "r") as f:
         cfg = yaml.safe_load(f)
 
-    # Sobreescribir el nombre del modelo en la config con el seleccionado en el sidebar.
-    # load_checkpoint necesita saber el backbone para construir la arquitectura correcta.
-    cfg["model"]["name"] = model_name
+    # load_checkpoint necesita el backbone real (no la etiqueta de display) para
+    # construir la arquitectura correcta.
+    cfg["model"]["name"] = backbone
+    if class_config:
+        cfg["data"]["class_config"] = class_config
 
     if not Path(checkpoint_path).exists():
         st.error(
@@ -98,9 +107,31 @@ def _load_model(checkpoint_path: str, model_name: str):
 
     device = torch.device("cpu")
     model, num_classes = load_checkpoint(cfg, checkpoint_path, device)
-    target_layers = get_grad_cam_layer(model, model_name)
-    labels = get_pathology_labels(num_classes)
+    target_layers = get_grad_cam_layer(model, backbone)
+
+    # Etiquetas: por configuración de clases si está; si no, por número de salidas.
+    # El último fallback (nombres genéricos) protege ante un checkpoint cuyo nº de
+    # clases no encaje con ninguna lista conocida, evitando un desalineado silencioso.
+    labels = get_active_pathology_cols(class_config) if class_config else None
+    if labels is None or len(labels) != num_classes:
+        try:
+            labels = get_pathology_labels(num_classes)
+        except ValueError:
+            labels = [f"Clase {i}" for i in range(num_classes)]
     return cfg, model, target_layers, device, labels
+
+
+def _collect_model_metrics(backbone: str, class_config: Optional[str]) -> Optional[dict]:
+    """
+    Devuelve las métricas de test del campeón registrado para este modelo, o None.
+
+    Busca en `models/best_model_registry.json` por la clave `<backbone>_<class_config>`
+    (o solo `<backbone>` en formato antiguo). Permite enriquecer el informe con la
+    fiabilidad validada del modelo cuando existe; si no hay registro, se omite.
+    """
+    clave = f"{backbone}_{class_config}" if class_config else backbone
+    registro = cargar_registro(clave)
+    return registro.get("test_metrics") if registro else None
 
 
 def _predict(model: torch.nn.Module, tensor: torch.Tensor, device: torch.device) -> np.ndarray:
@@ -155,13 +186,17 @@ def main() -> None:
     # Al cambiar el modelo, @st.cache_resource devuelve la instancia ya cargada
     # si ese checkpoint ya fue procesado antes, o carga una nueva en caso contrario.
     selected_label = st.sidebar.selectbox("Modelo", list(available_models.keys()))
-    checkpoint_path = available_models[selected_label]
+    info = available_models[selected_label]
+    checkpoint_path = info["path"]
 
-    cfg, model, target_layers, device, labels = _load_model(checkpoint_path, selected_label)
+    cfg, model, target_layers, device, labels = _load_model(
+        checkpoint_path, info["backbone"], info["class_config"]
+    )
 
     st.caption(
-        f"Backbone: **{selected_label}** — {len(labels)} patologías | "
-        f"Checkpoint: `{checkpoint_path}`"
+        f"Backbone: **{info['backbone']}**"
+        + (f" · config `{info['class_config']}`" if info["class_config"] else "")
+        + f" — {len(labels)} patologías | Checkpoint: `{checkpoint_path}`"
     )
 
     default_threshold = float(cfg["training"]["threshold"])
@@ -172,7 +207,14 @@ def main() -> None:
         "Umbral de clasificación", min_value=0.0, max_value=1.0,
         value=default_threshold, step=0.01,
     )
-    gradcam_label = st.sidebar.selectbox("Patología para GradCAM", labels)
+    # Nº de explicaciones Grad-CAM a generar: siempre al menos 5 (o todas si hay menos),
+    # hasta el total de patologías. Cada una añade una pasada de Grad-CAM (coste en CPU).
+    min_panels = min(5, len(labels))
+    n_panels = st.sidebar.slider(
+        "Nº de explicaciones (Grad-CAM)",
+        min_value=min_panels, max_value=len(labels),
+        value=min_panels, step=1,
+    )
 
     # ==================================================================
     # PASO 3: CARGA DE IMAGEN
@@ -201,30 +243,44 @@ def main() -> None:
     tensor = _EVAL_TRANSFORM(img_pil).unsqueeze(0)
 
     # ==================================================================
-    # PASO 4: INFERENCIA Y GRADCAM
+    # PASO 4: INFERENCIA Y GRADCAM (top-N por probabilidad)
     # ==================================================================
     probs = _predict(model, tensor, device)
 
-    # Calcular el índice de la patología seleccionada para GradCAM.
-    # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
-    class_idx = labels.index(gradcam_label)
-    mask = _compute_grad_cam(model, tensor, target_layers, class_idx, device)
+    # Imagen original en uint8 [0,255] para reutilizarla en cada panel y en el informe.
+    original_uint8 = (img_np * 255).astype(np.uint8)
 
-    # Superponer el mapa de calor sobre la imagen original.
-    # show_cam_on_image usa un colormap jet por defecto (azul→rojo) donde el rojo
-    # indica las zonas que más influyeron en la predicción de esa patología.
-    cam_image = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+    # Las N patologías más probables. argsort ascendente + inversión = orden descendente.
+    orden = np.argsort(probs)[::-1][:n_panels]
+    with st.spinner(f"Generando {len(orden)} mapas Grad-CAM…"):
+        panels = []
+        for idx in orden:
+            # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
+            mask = _compute_grad_cam(model, tensor, target_layers, int(idx), device)
+            # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
+            # que más influyeron en la predicción de esa patología.
+            heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+            panels.append({
+                "label": labels[int(idx)],
+                "prob": float(probs[int(idx)]),
+                "heatmap": heat,
+            })
 
     # ==================================================================
-    # PASO 5: VISUALIZACIÓN
+    # PASO 5: VISUALIZACIÓN — original (izq.) + Grad-CAM (der.) por patología
     # ==================================================================
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Imagen original")
-        st.image(img_resized, use_container_width=True)
-    with col2:
-        st.subheader(f"GradCAM — {gradcam_label}")
-        st.image(cam_image, use_container_width=True)
+    st.subheader(f"Explicabilidad visual — {len(panels)} patologías más probables")
+    st.caption(
+        "Izquierda: radiografía original. Derecha: mapa de calor Grad-CAM "
+        "(las zonas cálidas indican mayor influencia en la predicción)."
+    )
+    for p in panels:
+        st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.image(img_resized, use_container_width=True, caption="Original")
+        with col2:
+            st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
 
     # ==================================================================
     # PASO 6: GRÁFICO DE PROBABILIDADES
@@ -280,7 +336,7 @@ def main() -> None:
         )
 
     # ==================================================================
-    # PASO 7: RESUMEN Y EXPORTACIÓN
+    # PASO 7: RESUMEN E INFORME PDF
     # ==================================================================
     detected = df.loc[df["Detectada"], "Patología"].tolist()
     if detected:
@@ -288,14 +344,32 @@ def main() -> None:
     else:
         st.warning(f"Ninguna patología supera el umbral de {threshold:.2f}.")
 
-    # Botón de descarga: genera el CSV en memoria (sin fichero temporal en disco)
-    # y lo entrega al navegador con el nombre de la imagen como referencia.
-    csv_data = df_sorted.drop(columns=["Detectada"]).to_csv(index=False).encode("utf-8")
+    # Informe PDF profesional con tablas, gráfica, paneles original+Grad-CAM y, si el
+    # modelo tiene métricas de validación registradas, su fiabilidad. Se genera en
+    # memoria a partir de los datos ya calculados (no recalcula Grad-CAM).
+    filas = [
+        {"patologia": r["Patología"], "probabilidad": float(r["Probabilidad"]), "detectada": bool(r["Detectada"])}
+        for _, r in df_sorted.iterrows()
+    ]
+    contexto = {
+        "titulo": "Informe de análisis de radiografía torácica",
+        "modelo": info["backbone"],
+        "class_config": info["class_config"],
+        "checkpoint": checkpoint_path,
+        "imagen_nombre": uploaded.name,
+        "umbral": threshold,
+        "filas": filas,
+        "detectadas": detected,
+        "original": original_uint8,
+        "panels": panels,
+        "metricas_modelo": _collect_model_metrics(info["backbone"], info["class_config"]),
+    }
+    pdf_bytes = build_report_pdf(contexto)
     st.download_button(
-        label="Descargar resultados (CSV)",
-        data=csv_data,
-        file_name=f"resultados_{uploaded.name}.csv",
-        mime="text/csv",
+        label="Descargar informe (PDF)",
+        data=pdf_bytes,
+        file_name=f"informe_{Path(uploaded.name).stem}.pdf",
+        mime="application/pdf",
     )
 
     # ==================================================================

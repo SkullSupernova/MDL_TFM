@@ -10,7 +10,7 @@
 # El diseño permite cambiar el backbone (DenseNet, ResNet, EfficientNet) editando
 # solo config.yml, sin tocar ningún archivo de código.
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -88,6 +88,38 @@ def get_active_pathology_cols(class_config: str) -> List[str]:
             f"class_config '{class_config}' no definido. Opciones: {list(CLASS_CONFIGS)}"
         )
     return list(CLASS_CONFIGS[class_config]["cols"])
+
+
+def parse_checkpoint_filename(filename: str) -> Tuple[str, Optional[str]]:
+    """
+    Extrae (backbone, class_config) del nombre de un checkpoint.
+
+    Reconoce el patrón del proyecto `mejor_modelo_<backbone>_<class_config>.pth` y, por
+    compatibilidad, el formato anterior sin configuración de clases
+    (`mejor_modelo_<backbone>.pth`), en cuyo caso class_config es None. Respeta los
+    backbones cuyo nombre contiene guion bajo (p. ej. `convnext_tiny`) detectando el
+    sufijo de configuración entre las claves conocidas de CLASS_CONFIGS.
+
+    Ejemplos
+    --------
+    >>> parse_checkpoint_filename("mejor_modelo_convnext_tiny_min5pct9.pth")
+    ('convnext_tiny', 'min5pct9')
+    >>> parse_checkpoint_filename("mejor_modelo_densenet121.pth")
+    ('densenet121', None)
+    """
+    stem = filename.replace("\\", "/").split("/")[-1]
+    if stem.endswith(".pth"):
+        stem = stem[:-4]
+    for prefijo in ("mejor_modelo_", "_candidato_"):
+        if stem.startswith(prefijo):
+            stem = stem[len(prefijo):]
+            break
+    if stem.endswith("_subset"):
+        stem = stem[: -len("_subset")]
+    for cc in CLASS_CONFIGS:
+        if stem.endswith("_" + cc):
+            return stem[: -(len(cc) + 1)], cc
+    return stem, None
 
 
 def get_pathology_labels(num_classes: int) -> List[str]:

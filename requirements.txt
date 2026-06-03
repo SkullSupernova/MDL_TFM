@@ -58,6 +58,7 @@ python-dateutil==2.9.0.post0
 python-multipart==0.0.29
 PyYAML==6.0.3
 pyzmq==27.1.0
+reportlab==4.5.1
 requests==2.34.2
 scikit-learn==1.8.0
 scipy==1.17.1

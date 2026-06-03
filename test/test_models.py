@@ -194,3 +194,30 @@ def test_load_checkpoint_round_trip_convnext_tiny(tmp_path):
     assert num_classes == 9
     out = cargado(_torch.randn(1, 3, 224, 224))
     assert out.shape == (1, 9)
+
+
+# =========================================================
+# parse_checkpoint_filename
+# =========================================================
+
+@pytest.mark.parametrize("nombre,esperado", [
+    ("mejor_modelo_densenet121_full13.pth", ("densenet121", "full13")),
+    ("mejor_modelo_resnet50_nofracture12.pth", ("resnet50", "nofracture12")),
+    # Backbone con guion bajo: el sufijo de config debe detectarse sin partir el backbone.
+    ("mejor_modelo_convnext_tiny_min5pct9.pth", ("convnext_tiny", "min5pct9")),
+    # Formato antiguo, sin configuración de clases en el nombre.
+    ("mejor_modelo_densenet121.pth", ("densenet121", None)),
+    # Backbone con guion bajo sin sufijo de config conocido → class_config None.
+    ("mejor_modelo_efficientnet_b0.pth", ("efficientnet_b0", None)),
+])
+def test_parse_checkpoint_filename_casos(nombre, esperado):
+    from src.models import parse_checkpoint_filename
+    assert parse_checkpoint_filename(nombre) == esperado
+
+
+def test_parse_checkpoint_filename_ignora_directorio_y_prefijos():
+    from src.models import parse_checkpoint_filename
+    assert parse_checkpoint_filename("models/_candidato_vgg16_full13.pth") == ("vgg16", "full13")
+    assert parse_checkpoint_filename(
+        "models\\mejor_modelo_densenet121_full13_subset.pth"
+    ) == ("densenet121", "full13")
