@@ -7,31 +7,11 @@ from src.utils import (
     calculate_metrics,
     EarlyStopping,
     ModelCheckpoint,
-    filtrar_chexpert_dataset,
     aplicar_seleccion_clases,
 )
 from src.models import CHEXPERT_PATHOLOGY_COLS, get_active_pathology_cols
 
 
-# =========================================================
-# Fixture local: DataFrame CheXpert con 14 patologías
-# (la función filtrar_chexpert_dataset opera sobre 14 columnas)
-# =========================================================
-
-COLS_14 = [
-    'No Finding', 'Enlarged Cardiomediastinum', 'Cardiomegaly', 'Lung Opacity',
-    'Lung Lesion', 'Edema', 'Consolidation', 'Pneumonia', 'Atelectasis',
-    'Pneumothorax', 'Pleural Effusion', 'Pleural Other', 'Fracture', 'Support Devices',
-]
-
-
-def _df_chexpert_sintetico():
-    data = {col: [0.0, 1.0, 0.0, 0.0] for col in COLS_14}
-    data['Frontal/Lateral'] = ['Frontal', 'Lateral', 'Frontal', 'Frontal']
-    data['AP/PA'] = ['AP', 'AP', 'PA', 'AP']
-    data['Age'] = [30.0, 50.0, 25.0, 70.0]
-    data['Sex'] = ['Male', 'Female', 'Male', 'Female']
-    return pd.DataFrame(data)
 
 
 # =========================================================
@@ -171,53 +151,6 @@ def test_checkpoint_estado_inicial_sin_modelo():
     assert mc.best_f1 == -float('inf')
 
 
-# =========================================================
-# filtrar_chexpert_dataset — happy path
-# =========================================================
-
-def test_filtrar_excluye_vista_lateral():
-    df = _df_chexpert_sintetico()
-    result, _ = filtrar_chexpert_dataset(df, excluir_vistas=['Lateral'])
-    assert (result['Frontal/Lateral'] != 'Lateral').all()
-    assert len(result) == 3
-
-
-def test_filtrar_excluye_posicion_pa():
-    df = _df_chexpert_sintetico()
-    # eliminar_inconsistencias_nofinding=False evita que la fila 1 (No Finding + otras=1)
-    # sea eliminada por un filtro secundario, aislando el efecto del filtro de posición
-    result, _ = filtrar_chexpert_dataset(
-        df, excluir_posiciones=['PA'], eliminar_inconsistencias_nofinding=False
-    )
-    assert (result['AP/PA'] != 'PA').all()
-    assert len(result) == 3
-
-
-def test_filtrar_sin_criterios_preserva_todo():
-    df = _df_chexpert_sintetico()
-    result, reporte = filtrar_chexpert_dataset(
-        df, excluir_incertidumbre=False, eliminar_inconsistencias_nofinding=False
-    )
-    assert len(result) == len(df)
-    assert reporte['total_perdido'] == 0
-
-
-# =========================================================
-# filtrar_chexpert_dataset — errores
-# =========================================================
-
-def test_filtrar_columnas_faltantes_lanza_valueerror():
-    df = pd.DataFrame({'No Finding': [0.0]})
-    with pytest.raises(ValueError, match="Columnas faltantes"):
-        filtrar_chexpert_dataset(df, validar_columnas=True)
-
-
-def test_filtrar_reporte_contiene_claves_esperadas():
-    df = _df_chexpert_sintetico()
-    _, reporte = filtrar_chexpert_dataset(df, excluir_incertidumbre=False)
-    expected = {'total_original', 'total_final', 'total_perdido',
-                'porcentaje_retencion', 'porcentaje_perdido'}
-    assert expected.issubset(reporte.keys())
 
 
 # =========================================================

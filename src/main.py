@@ -82,7 +82,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model", default=None,
         help="Nombre del backbone a usar. Sobreescribe model.name de config.yml."
-             " Soportados: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny"
+             " Soportados: densenet121, vgg16, resnet50, convnext_tiny"
     )
     parser.add_argument(
         "--class-config", default=None,
@@ -107,6 +107,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tag", default=None,
         help="Etiqueta opcional para identificar el experimento en experiments/<run_id>."
+    )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Reanudar desde el checkpoint por época si existe (entrenamientos interrumpidos)."
     )
     return parser.parse_args()
 
@@ -434,6 +438,9 @@ def main():
         logger.info("Ejecución de prueba: no se promociona ni se sobrescribe el modelo de producción.")
     else:
         save_path = f"models/_candidato_{model_name}_{class_config}.pth"
+    # Checkpoint reanudable por época (solo en entrenamientos reales). Permite continuar un
+    # run interrumpido con --resume; se elimina al terminar correctamente.
+    resume_path = None if es_prueba else f"models/_ckpt_{model_name}_{class_config}.pth"
     logger.info(f"Backbone: {model_name} — checkpoint de este run: {save_path}")
 
     # Documentar la composición de los conjuntos en el experimento.
@@ -474,6 +481,8 @@ def main():
         num_epochs=cfg["training"]["epochs"],
         device=device,
         save_path=save_path,
+        resume_path=resume_path,
+        resume=args.resume,
     )
     duracion = time.time() - t0
     tracker.registrar_historial(history)

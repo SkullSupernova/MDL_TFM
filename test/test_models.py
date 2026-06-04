@@ -36,7 +36,7 @@ def test_pathology_no_finding_incluida():
 # =========================================================
 
 @pytest.mark.parametrize(
-    "model_name", ["densenet121", "vgg16", "resnet50", "efficientnet_b0", "convnext_tiny"]
+    "model_name", ["densenet121", "vgg16", "resnet50", "convnext_tiny"]
 )
 def test_build_model_shape_correcta(model_name):
     model = build_model(model_name=model_name, num_classes=13, pretrained=False)
@@ -115,7 +115,7 @@ def test_dataset_label_dtype_float32(synthetic_df):
 # =========================================================
 
 @pytest.mark.parametrize(
-    "model_name", ["densenet121", "vgg16", "resnet50", "efficientnet_b0", "convnext_tiny"]
+    "model_name", ["densenet121", "vgg16", "resnet50", "convnext_tiny"]
 )
 def test_grad_cam_layer_devuelve_lista_de_uno(model_name):
     model = build_model(model_name, pretrained=False)
@@ -208,7 +208,7 @@ def test_load_checkpoint_round_trip_convnext_tiny(tmp_path):
     # Formato antiguo, sin configuración de clases en el nombre.
     ("mejor_modelo_densenet121.pth", ("densenet121", None)),
     # Backbone con guion bajo sin sufijo de config conocido → class_config None.
-    ("mejor_modelo_efficientnet_b0.pth", ("efficientnet_b0", None)),
+    ("mejor_modelo_mobilenet_v2.pth", ("mobilenet_v2", None)),
 ])
 def test_parse_checkpoint_filename_casos(nombre, esperado):
     from src.models import parse_checkpoint_filename

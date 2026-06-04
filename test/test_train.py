@@ -131,3 +131,56 @@ def test_checkpoint_guardado_en_ruta_indicada(tmp_path):
         num_epochs=1, device=torch.device("cpu"), save_path=save_path,
     )
     assert os.path.exists(save_path)
+
+
+# =========================================================
+# train_model — reanudación (checkpoints reanudables)
+# =========================================================
+
+def _componentes():
+    model = _make_model()
+    loader = _make_loader()
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(model.parameters())
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+    return model, loader, criterion, optimizer, scheduler
+
+
+def test_resume_continua_desde_checkpoint(tmp_path):
+    import os
+    model, loader, criterion, optimizer, scheduler = _componentes()
+    resume_path = str(tmp_path / "ckpt_resume.pth")
+    # Checkpoint que simula que la época 0 ya se completó.
+    torch.save({
+        "epoch": 0,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "scheduler_state": scheduler.state_dict(),
+        "history": {"train_loss": [1.0], "val_loss": [1.0], "val_acc": [0.0],
+                    "val_f1": [0.0], "val_auroc": [0.5]},
+        "best_metric": 0.5,
+        "best_model_state": model.state_dict(),
+        "es_best_loss": 1.0, "es_counter": 0, "es_early_stop": False,
+    }, resume_path)
+
+    history, _ = train_model(
+        model, loader, loader, criterion, optimizer, scheduler,
+        num_epochs=3, device=torch.device("cpu"),
+        save_path=str(tmp_path / "best.pth"),
+        resume_path=resume_path, resume=True,
+    )
+    # 1 época del checkpoint + 2 nuevas (épocas 1 y 2) = 3 entradas.
+    assert len(history["train_loss"]) == 3
+    # Al terminar correctamente, el checkpoint reanudable se elimina.
+    assert not os.path.exists(resume_path)
+
+
+def test_resume_sin_checkpoint_empieza_de_cero(tmp_path):
+    model, loader, criterion, optimizer, scheduler = _componentes()
+    history, _ = train_model(
+        model, loader, loader, criterion, optimizer, scheduler,
+        num_epochs=2, device=torch.device("cpu"),
+        save_path=str(tmp_path / "best.pth"),
+        resume_path=str(tmp_path / "no_existe.pth"), resume=True,
+    )
+    assert len(history["train_loss"]) == 2

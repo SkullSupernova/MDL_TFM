@@ -209,9 +209,7 @@ class CheXpertDataset(Dataset):
 
 # Backbones soportados. Añadir uno nuevo requiere un bloque elif en build_model()
 # y una entrada en get_grad_cam_layer().
-SUPPORTED_MODELS = (
-    "densenet121", "vgg16", "resnet50", "efficientnet_b0", "efficientnet_b4", "convnext_tiny"
-)
+SUPPORTED_MODELS = ("densenet121", "vgg16", "resnet50", "convnext_tiny")
 
 
 def _classifier_head(
@@ -239,7 +237,7 @@ def build_model(
     pretrained: bool = True,
 ) -> nn.Module:
     """Generic multilabel classifier builder.
-    Supported backbones: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny."""
+    Supported backbones: densenet121, vgg16, resnet50, convnext_tiny."""
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(f"'{model_name}' no soportado. Elige entre {SUPPORTED_MODELS}")
 
@@ -270,13 +268,6 @@ def build_model(
         base = tv_models.resnet50(weights=weights)
         base.fc = _classifier_head(
             base.fc.in_features, hidden_units, dropout, num_classes
-        )
-    elif model_name.startswith("efficientnet"):
-        # EfficientNet: familia de redes diseñadas por escalado compuesto.
-        # Su clasificador es una secuencia; la última capa (índice -1) es el Linear.
-        base = getattr(tv_models, model_name)(weights=weights)
-        base.classifier[-1] = _classifier_head(
-            base.classifier[-1].in_features, hidden_units, dropout, num_classes
         )
     elif model_name == "convnext_tiny":
         # ConvNeXt-Tiny: CNN moderna inspirada en transformers. Su clasificador es
@@ -311,8 +302,6 @@ def _has_simple_head(state: dict, model_name: str) -> bool:
         return "classifier.6.weight" in state and "classifier.6.0.weight" not in state
     if model_name == "resnet50":
         return "fc.weight" in state and "fc.0.weight" not in state
-    if model_name.startswith("efficientnet"):
-        return "classifier.1.weight" in state and "classifier.1.0.weight" not in state
     if model_name == "convnext_tiny":
         return "classifier.2.weight" in state and "classifier.2.0.weight" not in state
     return False
@@ -336,9 +325,6 @@ def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
     elif model_name == "resnet50":
         base = tv_models.resnet50(weights=None)
         base.fc = nn.Linear(base.fc.in_features, num_classes)
-    elif model_name.startswith("efficientnet"):
-        base = getattr(tv_models, model_name)(weights=None)
-        base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
     elif model_name == "convnext_tiny":
         base = tv_models.convnext_tiny(weights=None)
         base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
@@ -369,10 +355,6 @@ def _infer_num_classes(state: dict, model_name: str) -> int:
     }
     if model_name in candidates:
         for key in candidates[model_name]:
-            if key in state:
-                return state[key].shape[0]
-    if model_name.startswith("efficientnet"):
-        for key in ["classifier.1.3.weight", "classifier.1.weight"]:
             if key in state:
                 return state[key].shape[0]
     raise ValueError(f"No se puede inferir num_classes para '{model_name}'")
@@ -464,8 +446,6 @@ def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
         return [convs[-1]]
     if model_name == "resnet50":
         return [model.layer4[-1]]      # último BasicBlock/Bottleneck
-    if model_name.startswith("efficientnet"):
-        return [model.features[-1]]    # último bloque MBConv
     if model_name == "convnext_tiny":
         return [model.features[-1]]    # última etapa CNBlock
     raise ValueError(f"No hay capa GradCAM definida para '{model_name}'")

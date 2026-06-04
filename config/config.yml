@@ -23,7 +23,7 @@ data:
   test_images_root: "C:/CheXpertDataset/chexpertchestxrays-u20210408/CheXpert-v1.0 batch 1 (validate & csv)/CheXpert-v1.0 batch 1 (validate & csv)_224"
 
 model:
-  name: "densenet121"          # soportados: densenet121, vgg16, resnet50, efficientnet_b0, efficientnet_b4, convnext_tiny
+  name: "densenet121"          # soportados: densenet121, vgg16, resnet50, convnext_tiny
   num_classes: 13              # valor de referencia (full13); main.py lo deriva de data.class_config
   dropout: 0.5
   hidden_units: 1024

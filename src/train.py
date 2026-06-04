@@ -7,8 +7,9 @@
 # El módulo es independiente de la arquitectura concreta: no sabe si está
 # entrenando un DenseNet o un ResNet, lo que permite reutilizarlo sin cambios.
 
+import os
 import time
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -29,7 +30,9 @@ def train_model(
     scheduler,
     num_epochs: int,
     device: torch.device,
-    save_path: str = "models/mejor_modelo_chexpert.pth"
+    save_path: str = "models/mejor_modelo_chexpert.pth",
+    resume_path: Optional[str] = None,
+    resume: bool = False,
 ) -> Tuple[Dict, torch.nn.Module]:
     """
     Bucle principal de entrenamiento para clasificación multietiqueta con CheXpert.
@@ -58,6 +61,14 @@ def train_model(
         Dispositivo de cómputo (CPU o CUDA).
     save_path : str
         Ruta donde se guardarán los pesos del mejor modelo.
+    resume_path : str, optional
+        Ruta del checkpoint reanudable. Si se indica, al final de cada época se guarda en
+        ella el estado completo (modelo, optimizador, scheduler, historial, mejor estado y
+        early stopping), de modo que un entrenamiento interrumpido pueda continuarse. Se
+        elimina al terminar correctamente.
+    resume : bool
+        Si True y resume_path existe, se reanuda desde ese checkpoint en lugar de empezar
+        de cero.
 
     Devuelve
     --------
@@ -86,10 +97,30 @@ def train_model(
     history = {'train_loss': [], 'val_loss': [], 'val_acc': [], 'val_f1': [], 'val_auroc': []}
 
     model = model.to(device)
+
+    # Reanudación: si se solicita y existe el checkpoint, se restauran todos los estados
+    # (modelo, optimizador, scheduler, historial, mejor punto y early stopping) y se
+    # continúa desde la época siguiente. weights_only=False porque el checkpoint contiene
+    # objetos Python además de tensores (es un fichero propio, de confianza).
+    start_epoch = 0
+    if resume and resume_path and os.path.exists(resume_path):
+        ckpt = torch.load(resume_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state"])
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        scheduler.load_state_dict(ckpt["scheduler_state"])
+        history = ckpt["history"]
+        model_checkpoint.best_f1 = ckpt["best_metric"]
+        model_checkpoint.best_model_state = ckpt["best_model_state"]
+        early_stopping.best_loss = ckpt["es_best_loss"]
+        early_stopping.counter = ckpt["es_counter"]
+        early_stopping.early_stop = ckpt["es_early_stop"]
+        start_epoch = ckpt["epoch"] + 1
+        logger.info(f"Reanudando entrenamiento desde la época {start_epoch + 1} (checkpoint: {resume_path})")
+
     logger.info(f"Inicio de entrenamiento en: {str(device).upper()}")
     start_time = time.time()
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         current_lr = optimizer.param_groups[0]['lr']
         logger.info(f"Época {epoch + 1}/{num_epochs} | LR: {current_lr:.6f}")
 
@@ -212,6 +243,23 @@ def train_model(
         # Si se ha superado la paciencia, se rompe el bucle y se pasa directamente
         # a restaurar los mejores pesos, sin seguir entrenando sobre el sobreajuste.
         early_stopping(val_epoch_loss)
+
+        # Guardar el checkpoint reanudable con el estado completo de esta época (tras
+        # actualizar los callbacks), para poder continuar si el proceso se interrumpe.
+        if resume_path:
+            torch.save({
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict(),
+                "history": history,
+                "best_metric": model_checkpoint.best_f1,
+                "best_model_state": model_checkpoint.best_model_state,
+                "es_best_loss": early_stopping.best_loss,
+                "es_counter": early_stopping.counter,
+                "es_early_stop": early_stopping.early_stop,
+            }, resume_path)
+
         if early_stopping.early_stop:
             logger.warning(f"Early Stopping activado en época {epoch + 1}.")
             break
@@ -225,6 +273,10 @@ def train_model(
     if model_checkpoint.best_model_state:
         model.load_state_dict(model_checkpoint.best_model_state)
         torch.save(model.state_dict(), save_path)
-        logger.info(f"Pesos restaurados al mejor F1 y guardados en: {save_path}")
+        logger.info(f"Pesos restaurados al mejor punto de validación y guardados en: {save_path}")
+
+    # El entrenamiento terminó correctamente: el checkpoint reanudable ya no es necesario.
+    if resume_path and os.path.exists(resume_path):
+        os.remove(resume_path)
 
     return history, model
