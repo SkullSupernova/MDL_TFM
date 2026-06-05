@@ -35,6 +35,7 @@ from torchvision import transforms
 from src.models import (
     get_active_pathology_cols,
     get_grad_cam_layer,
+    get_grad_cam_reshape,
     get_pathology_labels,
     load_checkpoint,
     parse_checkpoint_filename,
@@ -151,13 +152,16 @@ def _compute_grad_cam(
     target_layers: list,
     class_idx: int,
     device: torch.device,
+    reshape_transform=None,
 ) -> np.ndarray:
     # GradCAM calcula la importancia de cada región de la imagen midiendo cómo
     # cambian los gradientes de la clase objetivo en la capa convolucional elegida.
     # Para ello necesita que el grafo de gradientes esté activo: NO se puede usar
     # dentro de 'with torch.inference_mode()' ni 'with torch.no_grad()'.
     # La librería pytorch_grad_cam gestiona internamente el contexto de gradientes.
-    cam = GradCAM(model=model, target_layers=target_layers)
+    # reshape_transform es necesario para transformers (Swin): convierte las
+    # activaciones de tokens (B, H, W, C) al formato convolucional (B, C, H, W).
+    cam = GradCAM(model=model, target_layers=target_layers, reshape_transform=reshape_transform)
     targets = [ClassifierOutputTarget(class_idx)]
     mask = cam(input_tensor=tensor.to(device), targets=targets)
     return mask[0]  # (H, W) float32 en [0, 1]; 0=no relevante, 1=muy relevante
@@ -303,11 +307,16 @@ def main() -> None:
     # primeras del orden descendente. argsort ascendente + inversión = orden descendente.
     n_show = min(max(len(detected), min_panels), max_panels, len(labels))
     orden = np.argsort(probs)[::-1][:n_show]
+    # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
+    # las CNN devuelven None. Se calcula una vez y se reutiliza en cada panel.
+    reshape = get_grad_cam_reshape(info["backbone"])
     with st.spinner(f"Generando {len(orden)} mapas Grad-CAM…"):
         panels = []
         for idx in orden:
             # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
-            mask = _compute_grad_cam(model, tensor, target_layers, int(idx), device)
+            mask = _compute_grad_cam(
+                model, tensor, target_layers, int(idx), device, reshape_transform=reshape
+            )
             # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
             # que más influyeron en la predicción de esa patología.
             heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8

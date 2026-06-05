@@ -36,7 +36,7 @@ def test_pathology_no_finding_incluida():
 # =========================================================
 
 @pytest.mark.parametrize(
-    "model_name", ["densenet121", "vgg16", "resnet50", "convnext_tiny"]
+    "model_name", ["densenet121", "vgg16_bn", "resnet50", "convnext_tiny", "swin_t"]
 )
 def test_build_model_shape_correcta(model_name):
     model = build_model(model_name=model_name, num_classes=13, pretrained=False)
@@ -115,7 +115,7 @@ def test_dataset_label_dtype_float32(synthetic_df):
 # =========================================================
 
 @pytest.mark.parametrize(
-    "model_name", ["densenet121", "vgg16", "resnet50", "convnext_tiny"]
+    "model_name", ["densenet121", "vgg16_bn", "resnet50", "convnext_tiny", "swin_t"]
 )
 def test_grad_cam_layer_devuelve_lista_de_uno(model_name):
     model = build_model(model_name, pretrained=False)
@@ -124,11 +124,23 @@ def test_grad_cam_layer_devuelve_lista_de_uno(model_name):
     assert len(layer) == 1
 
 
-def test_grad_cam_layer_vgg16_es_conv2d():
+def test_grad_cam_layer_vgg16_bn_es_conv2d():
     import torch.nn as nn
-    model = build_model("vgg16", pretrained=False)
-    capa = get_grad_cam_layer(model, "vgg16")[0]
+    model = build_model("vgg16_bn", pretrained=False)
+    capa = get_grad_cam_layer(model, "vgg16_bn")[0]
     assert isinstance(capa, nn.Conv2d)
+
+
+def test_grad_cam_reshape_solo_para_transformers():
+    from src.models import get_grad_cam_reshape
+    import torch as _torch
+    assert get_grad_cam_reshape("densenet121") is None
+    assert get_grad_cam_reshape("vgg16_bn") is None
+    reshape = get_grad_cam_reshape("swin_t")
+    assert callable(reshape)
+    # (B, H, W, C) -> (B, C, H, W)
+    salida = reshape(_torch.zeros(2, 7, 7, 96))
+    assert tuple(salida.shape) == (2, 96, 7, 7)
 
 
 # =========================================================
@@ -196,6 +208,19 @@ def test_load_checkpoint_round_trip_convnext_tiny(tmp_path):
     assert out.shape == (1, 9)
 
 
+def test_load_checkpoint_round_trip_swin_t(tmp_path):
+    import torch as _torch
+    cfg = {"model": {"name": "swin_t", "dropout": 0.5, "hidden_units": 256}}
+    model = build_model("swin_t", num_classes=9, hidden_units=256, pretrained=False)
+    ckpt = tmp_path / "swin.pth"
+    _torch.save(model.state_dict(), ckpt)
+
+    cargado, num_classes = load_checkpoint(cfg, str(ckpt), _torch.device("cpu"))
+    assert num_classes == 9
+    out = cargado(_torch.randn(1, 3, 224, 224))
+    assert out.shape == (1, 9)
+
+
 # =========================================================
 # parse_checkpoint_filename
 # =========================================================
@@ -205,6 +230,7 @@ def test_load_checkpoint_round_trip_convnext_tiny(tmp_path):
     ("mejor_modelo_resnet50_nofracture12.pth", ("resnet50", "nofracture12")),
     # Backbone con guion bajo: el sufijo de config debe detectarse sin partir el backbone.
     ("mejor_modelo_convnext_tiny_min5pct9.pth", ("convnext_tiny", "min5pct9")),
+    ("mejor_modelo_swin_t_nofracture12.pth", ("swin_t", "nofracture12")),
     # Formato antiguo, sin configuración de clases en el nombre.
     ("mejor_modelo_densenet121.pth", ("densenet121", None)),
     # Backbone con guion bajo sin sufijo de config conocido → class_config None.
@@ -217,7 +243,7 @@ def test_parse_checkpoint_filename_casos(nombre, esperado):
 
 def test_parse_checkpoint_filename_ignora_directorio_y_prefijos():
     from src.models import parse_checkpoint_filename
-    assert parse_checkpoint_filename("models/_candidato_vgg16_full13.pth") == ("vgg16", "full13")
+    assert parse_checkpoint_filename("models/_candidato_vgg16_bn_full13.pth") == ("vgg16_bn", "full13")
     assert parse_checkpoint_filename(
         "models\\mejor_modelo_densenet121_full13_subset.pth"
     ) == ("densenet121", "full13")

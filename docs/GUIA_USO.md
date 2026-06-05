@@ -69,7 +69,7 @@ Requiere el dataset local y las rutas en `config/config.yml`.
 ```bash
 python -m src.main                                              # completo (config por defecto)
 python -m src.main --epochs 1 --subset 500 --val-subset 200    # validación rápida del pipeline
-python -m src.main --model vgg16 --class-config nofracture12    # arquitectura y clases concretas
+python -m src.main --model swin_t --class-config nofracture12 --batch-size 16   # arquitectura y clases concretas
 python -m src.main --resume                                    # reanudar un run interrumpido
 ```
 
@@ -77,9 +77,10 @@ Opciones principales:
 
 | Opción | Significado |
 |---|---|
-| `--model` | `densenet121`, `vgg16`, `resnet50`, `convnext_tiny` |
+| `--model` | `densenet121`, `vgg16_bn`, `resnet50`, `convnext_tiny`, `swin_t` |
 | `--class-config` | `full13` (13), `nofracture12` (12), `min5pct9` (9) |
 | `--epochs` | Número máximo de épocas |
+| `--batch-size` / `--inference-batch-size` | Tamaño de lote train / inferencia (bajar en 8 GB para VGG16-BN y Swin) |
 | `--subset` / `--val-subset` | Limitar train / validación (pruebas rápidas) |
 | `--seed` | Semilla (reproducibilidad / multi-semilla) |
 | `--tag` | Etiqueta para identificar el experimento |
@@ -127,9 +128,10 @@ varía solo el backbone:
 
 ```bash
 python -m src.main --class-config nofracture12 --model densenet121
-python -m src.main --class-config nofracture12 --model vgg16
+python -m src.main --class-config nofracture12 --model vgg16_bn        --batch-size 16
 python -m src.main --class-config nofracture12 --model resnet50
-python -m src.main --class-config nofracture12 --model convnext_tiny
+python -m src.main --class-config nofracture12 --model convnext_tiny   --batch-size 16
+python -m src.main --class-config nofracture12 --model swin_t          --batch-size 16
 ```
 
 Los resultados se agregan en `experiments/leaderboard.csv`. La incertidumbre se estima por bootstrap sobre el

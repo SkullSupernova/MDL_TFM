@@ -82,7 +82,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model", default=None,
         help="Nombre del backbone a usar. Sobreescribe model.name de config.yml."
-             " Soportados: densenet121, vgg16, resnet50, convnext_tiny"
+             " Soportados: densenet121, vgg16_bn, resnet50, convnext_tiny, swin_t"
     )
     parser.add_argument(
         "--class-config", default=None,
@@ -95,6 +95,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--epochs", type=int, default=None,
         help="Número máximo de épocas. Sobreescribe training.epochs de config.yml."
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=None,
+        help="Tamaño de lote de entrenamiento. Sobreescribe training.batch_size."
+             " Útil para bajar el lote en arquitecturas pesadas (VGG16-BN, Swin) en 8 GB de VRAM."
+    )
+    parser.add_argument(
+        "--inference-batch-size", type=int, default=None,
+        help="Tamaño de lote de validación/inferencia. Sobreescribe training.inference_batch_size."
     )
     parser.add_argument(
         "--subset", type=int, default=None,
@@ -244,6 +253,10 @@ def main():
         cfg["data"]["class_config"] = args.class_config
     if args.seed is not None:
         cfg["training"]["seed"] = args.seed
+    if args.batch_size:
+        cfg["training"]["batch_size"] = args.batch_size
+    if args.inference_batch_size:
+        cfg["training"]["inference_batch_size"] = args.inference_batch_size
 
     # La configuración de clases determina las columnas activas y, por tanto, el nº de
     # salidas del modelo. num_classes se deriva de aquí (no del valor estático de config).

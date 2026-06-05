@@ -144,7 +144,7 @@ python -m src.main --model convnext_tiny --class-config nofracture12
 python -m src.main --resume
 ```
 
-- **Arquitecturas:** `densenet121`, `vgg16`, `resnet50`, `convnext_tiny`.
+- **Arquitecturas:** `densenet121`, `vgg16_bn`, `resnet50`, `convnext_tiny`, `swin_t`.
 - **Configuraciones de clases (`--class-config`):** `full13` (13), `nofracture12` (12, sin Fracture),
   `min5pct9` (9, solo prevalencia mayor o igual al 5 por ciento).
 - Cada entrenamiento real evalúa sobre el test silver-standard, decide la promoción del mejor modelo y genera
@@ -199,8 +199,8 @@ Todos los parámetros están en `config/config.yml`:
 | `data.class_config` | Conjunto de clases activo: `full13` / `nofracture12` / `min5pct9` | `full13` |
 | `data.img_size` | Tamaño de entrada en píxeles | `224` |
 | `data.train_split` | Proporción de pacientes para entrenar | `0.9` |
-| `model.name` | Arquitectura (`densenet121`, `vgg16`, `resnet50`, `convnext_tiny`) | `densenet121` |
-| `training.epochs` / `training.batch_size` | Épocas máximas / tamaño de lote | `50` / `64` |
+| `model.name` | Arquitectura (`densenet121`, `vgg16_bn`, `resnet50`, `convnext_tiny`, `swin_t`) | `densenet121` |
+| `training.epochs` / `training.batch_size` | Épocas máximas / tamaño de lote (CLI: `--epochs` / `--batch-size`) | `50` / `64` |
 | `training.learning_rate` / `training.seed` | Tasa de aprendizaje / semilla | `0.0001` / `42` |
 | `training.threshold` | Umbral de detección por defecto | `0.5` |
 | `training.promotion_min_delta` | Margen mínimo para promover el mejor modelo | `0.005` |

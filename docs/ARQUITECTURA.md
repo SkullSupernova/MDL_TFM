@@ -43,8 +43,9 @@ Consolidation, Edema, Pleural Effusion) se usan como métrica principal de promo
 
 - **`models.py`** — Arquitecturas y modelo de datos. `CHEXPERT_PATHOLOGY_COLS` (13) y `CHEXPERT_COMPETITION_5`;
   `CLASS_CONFIGS` y `get_active_pathology_cols` (configuraciones de clases, sección 10); `build_model`
-  (densenet121/vgg16/resnet50/convnext_tiny, cabeza Linear-ReLU-Dropout-Linear); `get_grad_cam_layer` (capa
-  objetivo por backbone); `load_checkpoint` (infiere nº de clases y detecta cabeza simple/compuesta);
+  (densenet121/vgg16_bn/resnet50/convnext_tiny/swin_t, cabeza Linear-ReLU-Dropout-Linear); `get_grad_cam_layer`
+  (capa objetivo por backbone) y `get_grad_cam_reshape` (reshape de tokens para transformers como Swin);
+  `load_checkpoint` (infiere nº de clases y detecta cabeza simple/compuesta);
   `parse_checkpoint_filename` (extrae backbone y class_config del nombre); `CheXpertDataset` (lee imágenes y
   etiquetas).
 - **`utils.py`** — `setup_environment`/`set_seed`; ETL whitelist (`filtrar_chexpert_dataset_whitelist`,

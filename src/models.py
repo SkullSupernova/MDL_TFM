@@ -10,7 +10,7 @@
 # El diseño permite cambiar el backbone (DenseNet, ResNet, EfficientNet) editando
 # solo config.yml, sin tocar ningún archivo de código.
 
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -209,7 +209,7 @@ class CheXpertDataset(Dataset):
 
 # Backbones soportados. Añadir uno nuevo requiere un bloque elif en build_model()
 # y una entrada en get_grad_cam_layer().
-SUPPORTED_MODELS = ("densenet121", "vgg16", "resnet50", "convnext_tiny")
+SUPPORTED_MODELS = ("densenet121", "vgg16_bn", "resnet50", "convnext_tiny", "swin_t")
 
 
 def _classifier_head(
@@ -237,7 +237,7 @@ def build_model(
     pretrained: bool = True,
 ) -> nn.Module:
     """Generic multilabel classifier builder.
-    Supported backbones: densenet121, vgg16, resnet50, convnext_tiny."""
+    Supported backbones: densenet121, vgg16_bn, resnet50, convnext_tiny, swin_t."""
     if model_name not in SUPPORTED_MODELS:
         raise ValueError(f"'{model_name}' no soportado. Elige entre {SUPPORTED_MODELS}")
 
@@ -254,11 +254,12 @@ def build_model(
         base.classifier = _classifier_head(
             base.classifier.in_features, hidden_units, dropout, num_classes
         )
-    elif model_name == "vgg16":
-        # VGG-16: red secuencial clásica (pila de convoluciones sin conexiones de
-        # salto). Su clasificador es una secuencia cuya última capa (índice -1) es
-        # el Linear de salida.
-        base = tv_models.vgg16(weights=weights)
+    elif model_name == "vgg16_bn":
+        # VGG-16 con BatchNorm: red secuencial clásica (pila de convoluciones sin
+        # conexiones de salto). El BatchNorm la hace mucho más estable de entrenar
+        # que la VGG original. Su clasificador es una secuencia cuya última capa
+        # (índice -1) es el Linear de salida.
+        base = tv_models.vgg16_bn(weights=weights)
         base.classifier[-1] = _classifier_head(
             base.classifier[-1].in_features, hidden_units, dropout, num_classes
         )
@@ -275,6 +276,13 @@ def build_model(
         base = tv_models.convnext_tiny(weights=weights)
         base.classifier[-1] = _classifier_head(
             base.classifier[-1].in_features, hidden_units, dropout, num_classes
+        )
+    elif model_name == "swin_t":
+        # Swin Transformer Tiny: transformer de visión jerárquico con ventanas
+        # desplazadas. Su cabeza de clasificación se llama 'head' (un Linear).
+        base = tv_models.swin_t(weights=weights)
+        base.head = _classifier_head(
+            base.head.in_features, hidden_units, dropout, num_classes
         )
 
     return base
@@ -298,12 +306,14 @@ def _has_simple_head(state: dict, model_name: str) -> bool:
     # lo que corresponde a _classifier_head (índice 0 = primer Linear).
     if model_name == "densenet121":
         return "classifier.weight" in state and "classifier.0.weight" not in state
-    if model_name == "vgg16":
+    if model_name == "vgg16_bn":
         return "classifier.6.weight" in state and "classifier.6.0.weight" not in state
     if model_name == "resnet50":
         return "fc.weight" in state and "fc.0.weight" not in state
     if model_name == "convnext_tiny":
         return "classifier.2.weight" in state and "classifier.2.0.weight" not in state
+    if model_name == "swin_t":
+        return "head.weight" in state and "head.0.weight" not in state
     return False
 
 
@@ -319,8 +329,8 @@ def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
     if model_name == "densenet121":
         base = tv_models.densenet121(weights=None)
         base.classifier = nn.Linear(base.classifier.in_features, num_classes)
-    elif model_name == "vgg16":
-        base = tv_models.vgg16(weights=None)
+    elif model_name == "vgg16_bn":
+        base = tv_models.vgg16_bn(weights=None)
         base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
     elif model_name == "resnet50":
         base = tv_models.resnet50(weights=None)
@@ -328,6 +338,9 @@ def _build_simple_head_model(model_name: str, num_classes: int) -> nn.Module:
     elif model_name == "convnext_tiny":
         base = tv_models.convnext_tiny(weights=None)
         base.classifier[-1] = nn.Linear(base.classifier[-1].in_features, num_classes)
+    elif model_name == "swin_t":
+        base = tv_models.swin_t(weights=None)
+        base.head = nn.Linear(base.head.in_features, num_classes)
     else:
         raise ValueError(f"'{model_name}' no soportado")
     return base
@@ -349,9 +362,10 @@ def _infer_num_classes(state: dict, model_name: str) -> int:
     # antes que las de la cabeza simple, para mayor precisión en la detección.
     candidates: dict[str, list[str]] = {
         "densenet121":   ["classifier.3.weight",   "classifier.weight"],
-        "vgg16":         ["classifier.6.3.weight", "classifier.6.weight"],
+        "vgg16_bn":      ["classifier.6.3.weight", "classifier.6.weight"],
         "resnet50":      ["fc.3.weight",            "fc.weight"],
         "convnext_tiny": ["classifier.2.3.weight", "classifier.2.weight"],
+        "swin_t":        ["head.3.weight",          "head.weight"],
     }
     if model_name in candidates:
         for key in candidates[model_name]:
@@ -423,12 +437,14 @@ def load_checkpoint(
 
 def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
     """
-    Devuelve la lista con la capa convolucional target para GradCAM.
+    Devuelve la lista con la capa target para GradCAM.
 
     La capa elegida es la última del bloque de características de cada backbone:
     DenseNet-121 → features[-1] (DenseBlock + BatchNorm final),
+    VGG16-BN     → última Conv2d de features,
     ResNet-50    → layer4[-1] (último bloque residual),
-    EfficientNet → features[-1] (último bloque MBConv).
+    ConvNeXt     → features[-1] (última etapa CNBlock),
+    Swin-T       → norm (LayerNorm final; requiere reshape, ver get_grad_cam_reshape).
 
     Raises:
         ValueError: si model_name no está entre los backbones soportados.
@@ -440,7 +456,7 @@ def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
     # de más alto nivel (las más relacionadas con la clase a explicar).
     if model_name == "densenet121":
         return [model.features[-1]]    # DenseBlock4 + BatchNorm2d final
-    if model_name == "vgg16":
+    if model_name == "vgg16_bn":
         # features termina en MaxPool2d; se busca la última Conv2d real de la pila.
         convs = [m for m in model.features if isinstance(m, nn.Conv2d)]
         return [convs[-1]]
@@ -448,4 +464,22 @@ def get_grad_cam_layer(model: nn.Module, model_name: str) -> list:
         return [model.layer4[-1]]      # último BasicBlock/Bottleneck
     if model_name == "convnext_tiny":
         return [model.features[-1]]    # última etapa CNBlock
+    if model_name == "swin_t":
+        # LayerNorm final, cuya salida (B, H, W, C) conserva la rejilla espacial de
+        # tokens; GradCAM la reorganiza a (B, C, H, W) con get_grad_cam_reshape.
+        return [model.norm]
     raise ValueError(f"No hay capa GradCAM definida para '{model_name}'")
+
+
+def get_grad_cam_reshape(model_name: str) -> Optional[Callable]:
+    """
+    Devuelve la función reshape_transform para GradCAM, o None para las CNN.
+
+    Los transformers de visión (Swin) emiten las activaciones de la capa target con
+    los tokens en formato channels-last (B, H, W, C); GradCAM espera mapas de
+    activación convolucionales (B, C, H, W). Para `swin_t` se permutan los ejes; las
+    CNN no requieren ninguna transformación.
+    """
+    if model_name == "swin_t":
+        return lambda tensor: tensor.permute(0, 3, 1, 2)
+    return None
