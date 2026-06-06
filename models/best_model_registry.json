@@ -26,5 +26,33 @@
     },
     "checkpoint_path": "models/mejor_modelo_densenet121_nofracture12.pth",
     "promovido": true
+  },
+  "convnext_tiny_nofracture12": {
+    "timestamp": "2026-06-06T13:07:02",
+    "backbone": "convnext_tiny",
+    "class_config": "nofracture12",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8179216006053491,
+      "f1_macro": 0.47386470286265014,
+      "accuracy": 0.05806520349456638
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8536461769172954,
+      "auroc_macro_evaluable": 0.8128782631006851,
+      "pr_auc_macro_evaluable": 0.6180504160049035,
+      "f1_macro": 0.48086716216442876,
+      "f1_micro": 0.5783132530120482,
+      "accuracy": 0.04142011834319527,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_convnext_tiny_nofracture12.pth",
+    "promovido": true
   }
 }
