@@ -106,6 +106,14 @@ def _parse_args() -> argparse.Namespace:
         help="Tamaño de lote de validación/inferencia. Sobreescribe training.inference_batch_size."
     )
     parser.add_argument(
+        "--patience", type=int, default=None,
+        help="Paciencia del early stopping (épocas sin mejora de val_loss). Sobreescribe training.early_stopping_patience."
+    )
+    parser.add_argument(
+        "--scheduler-patience", type=int, default=None,
+        help="Paciencia del scheduler ReduceLROnPlateau. Sobreescribe training.scheduler_patience."
+    )
+    parser.add_argument(
         "--subset", type=int, default=None,
         help="Limitar el conjunto de entrenamiento a N imágenes. Útil para validación rápida."
     )
@@ -257,6 +265,10 @@ def main():
         cfg["training"]["batch_size"] = args.batch_size
     if args.inference_batch_size:
         cfg["training"]["inference_batch_size"] = args.inference_batch_size
+    if args.patience:
+        cfg["training"]["early_stopping_patience"] = args.patience
+    if args.scheduler_patience:
+        cfg["training"]["scheduler_patience"] = args.scheduler_patience
 
     # La configuración de clases determina las columnas activas y, por tanto, el nº de
     # salidas del modelo. num_classes se deriva de aquí (no del valor estático de config).
@@ -496,6 +508,7 @@ def main():
         save_path=save_path,
         resume_path=resume_path,
         resume=args.resume,
+        patience=cfg["training"]["early_stopping_patience"],
     )
     duracion = time.time() - t0
     tracker.registrar_historial(history)

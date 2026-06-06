@@ -1,0 +1,30 @@
+{
+  "densenet121_nofracture12": {
+    "timestamp": "2026-06-06T03:32:02",
+    "backbone": "densenet121",
+    "class_config": "nofracture12",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8183028785198051,
+      "f1_macro": 0.4619656848784765,
+      "accuracy": 0.03899424675047944
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8497405270070585,
+      "auroc_macro_evaluable": 0.822936326199348,
+      "pr_auc_macro_evaluable": 0.6136188824750312,
+      "f1_macro": 0.49677598482733093,
+      "f1_micro": 0.5758818703855619,
+      "accuracy": 0.01775147928994083,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_densenet121_nofracture12.pth",
+    "promovido": true
+  }
+}

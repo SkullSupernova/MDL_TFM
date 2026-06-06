@@ -33,6 +33,7 @@ def train_model(
     save_path: str = "models/mejor_modelo_chexpert.pth",
     resume_path: Optional[str] = None,
     resume: bool = False,
+    patience: int = 6,
 ) -> Tuple[Dict, torch.nn.Module]:
     """
     Bucle principal de entrenamiento para clasificación multietiqueta con CheXpert.
@@ -69,6 +70,9 @@ def train_model(
     resume : bool
         Si True y resume_path existe, se reanuda desde ese checkpoint en lugar de empezar
         de cero.
+    patience : int
+        Épocas sin mejora de val_loss antes de detener (early stopping). Debe ser mayor que
+        la paciencia del scheduler para aprovechar las reducciones de learning rate.
 
     Devuelve
     --------
@@ -82,7 +86,7 @@ def train_model(
     # durante 'patience' épocas consecutivas, evitando el sobreajuste y el tiempo perdido.
     # ModelCheckpoint guarda en memoria (no en disco) los pesos del mejor modelo visto,
     # medido por F1-macro de validación.
-    early_stopping = EarlyStopping(patience=6)
+    early_stopping = EarlyStopping(patience=patience)
     model_checkpoint = ModelCheckpoint()
 
     # Configurar Automatic Mixed Precision (AMP).

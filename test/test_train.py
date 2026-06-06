@@ -111,6 +111,33 @@ def test_train_loss_decrece_tras_varias_epocas(tmp_path):
     assert history['train_loss'][-1] < history['train_loss'][0]
 
 
+def test_patience_se_pasa_a_early_stopping(tmp_path, monkeypatch):
+    # Verifica el cableado: el valor de patience llega a EarlyStopping. Se hace con un
+    # doble que captura el argumento (más robusto que depender de la dinámica de pérdida).
+    import src.train as train_mod
+    capturado = {}
+    original = train_mod.EarlyStopping
+
+    def fake_early_stopping(patience=6):
+        capturado["patience"] = patience
+        return original(patience=patience)
+
+    monkeypatch.setattr(train_mod, "EarlyStopping", fake_early_stopping)
+
+    model = _make_model()
+    loader = _make_loader()
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(model.parameters())
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+
+    train_model(
+        model, loader, loader, criterion, optimizer, scheduler,
+        num_epochs=1, device=torch.device("cpu"),
+        save_path=str(tmp_path / "ckpt.pth"), patience=8,
+    )
+    assert capturado["patience"] == 8
+
+
 # =========================================================
 # train_model — gestión de errores
 # =========================================================
