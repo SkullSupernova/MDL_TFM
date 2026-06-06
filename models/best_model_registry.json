@@ -54,5 +54,33 @@
     },
     "checkpoint_path": "models/mejor_modelo_convnext_tiny_nofracture12.pth",
     "promovido": true
+  },
+  "resnet50_nofracture12": {
+    "timestamp": "2026-06-06T22:51:36",
+    "backbone": "resnet50",
+    "class_config": "nofracture12",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8158957102421315,
+      "f1_macro": 0.46723783708035366,
+      "accuracy": 0.04293628808864266
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.851704082711221,
+      "auroc_macro_evaluable": 0.7977870699675279,
+      "pr_auc_macro_evaluable": 0.5991694516027639,
+      "f1_macro": 0.5062487052540753,
+      "f1_micro": 0.6044591246903386,
+      "accuracy": 0.047337278106508875,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_resnet50_nofracture12.pth",
+    "promovido": true
   }
 }
