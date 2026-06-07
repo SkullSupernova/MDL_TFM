@@ -23,12 +23,14 @@ Arranque: `streamlit run src/app.py` (o mediante Docker; ver README). Se abre en
 
 ### 2.1. Pasos
 
-1. **Modelo**: en la barra lateral, elige el modelo a usar. Aparecen todos los `models/mejor_modelo_*.pth`
-   disponibles, identificados por su arquitectura y configuración de clases.
+1. **Arquitectura y clases**: en la barra lateral, elige primero la **arquitectura** (DenseNet-121, ResNet-50,
+   ConvNeXt-Tiny, Swin-Tiny) y después las **clases entrenadas** (13, 12 o 9; el segundo desplegable solo
+   ofrece las configuraciones disponibles para la arquitectura elegida). La combinación determina el checkpoint
+   `models/mejor_modelo_*.pth` que se carga.
 2. **Umbral de clasificación**: nivel de confianza a partir del cual una patología se considera "detectada".
    Un umbral bajo detecta más patologías (más sensibilidad, más falsos positivos); uno alto es más conservador.
-3. **Máximo de paneles (Grad-CAM)**: cuántas explicaciones visuales mostrar como máximo. Siempre se muestran al
-   menos las 5 patologías más probables; si hay más detectadas, se muestran hasta este máximo.
+3. **Máximo de paneles (Grad-CAM)**: cuántas explicaciones visuales generar como máximo. Solo se muestran las
+   patologías cuya probabilidad **supera el umbral** (las más probables primero); este valor limita cuántas.
 4. **Cargar radiografía**: sube un archivo JPEG o PNG. Puedes usar los ejemplos de `muestras_busqueda/`.
 5. Revisa los resultados (sección 2.2) y, si quieres, **descarga** el informe PDF, el ZIP de imágenes o el CSV
    del historial.
@@ -39,11 +41,13 @@ El tema claro u oscuro se cambia desde el menú de la esquina superior derecha, 
 
 - **Resumen**: tarjetas con el número de patologías detectadas, la probabilidad máxima, la patología principal
   y el umbral aplicado, más la lista de patologías detectadas.
-- **Explicabilidad visual**: por cada patología detectada (mínimo 5), la radiografía original a la izquierda y
-  su mapa de calor Grad-CAM a la derecha. Las zonas cálidas (rojas) son las que más han influido en la
-  predicción de esa patología; las frías (azules), las que menos.
+- **Explicabilidad visual**: solo por cada patología **detectada** (probabilidad ≥ umbral), la radiografía
+  original a la izquierda y su mapa de calor Grad-CAM a la derecha. Si ninguna supera el umbral no se muestran
+  mapas (un mensaje invita a bajarlo). Las zonas cálidas (rojas) son las que más han influido en la predicción
+  de esa patología; las frías (azules), las que menos.
 - **Probabilidades por patología**: gráfico de barras con el porcentaje de cada clase (verde = detectada,
-  gris = no detectada) y tabla detallada.
+  gris = no detectada) y tabla detallada. El informe PDF incluye este mismo gráfico con cuadrícula y el valor
+  numérico de cada barra.
 
 ---
 
