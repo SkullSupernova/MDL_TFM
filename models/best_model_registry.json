@@ -82,5 +82,145 @@
     },
     "checkpoint_path": "models/mejor_modelo_resnet50_nofracture12.pth",
     "promovido": true
+  },
+  "swin_t_nofracture12": {
+    "timestamp": "2026-06-07T06:40:24",
+    "backbone": "swin_t",
+    "class_config": "nofracture12",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8195402040314264,
+      "f1_macro": 0.46473940116012374,
+      "accuracy": 0.039207330066055826
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8437984682860158,
+      "auroc_macro_evaluable": 0.7923651705513434,
+      "pr_auc_macro_evaluable": 0.616176109915372,
+      "f1_macro": 0.5039876328563351,
+      "f1_micro": 0.5806974858069749,
+      "accuracy": 0.047337278106508875,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_swin_t_nofracture12.pth",
+    "promovido": true
+  },
+  "densenet121_min5pct9": {
+    "timestamp": "2026-06-07T08:16:31",
+    "backbone": "densenet121",
+    "class_config": "min5pct9",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8252059227013646,
+      "f1_macro": 0.5838868215691206,
+      "accuracy": 0.1029041095890411
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8255526371748078,
+      "auroc_macro_evaluable": 0.8577834756547013,
+      "pr_auc_macro_evaluable": 0.7037639620938719,
+      "f1_macro": 0.5767781383804732,
+      "f1_micro": 0.6306122448979592,
+      "accuracy": 0.07692307692307693,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_densenet121_min5pct9.pth",
+    "promovido": true
+  },
+  "resnet50_min5pct9": {
+    "timestamp": "2026-06-07T09:41:30",
+    "backbone": "resnet50",
+    "class_config": "min5pct9",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8274878563909097,
+      "f1_macro": 0.592717615556852,
+      "accuracy": 0.11243835616438357
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8421813240851324,
+      "auroc_macro_evaluable": 0.875057993480072,
+      "pr_auc_macro_evaluable": 0.7091095984409372,
+      "f1_macro": 0.605075422662298,
+      "f1_micro": 0.6597724922440538,
+      "accuracy": 0.09467455621301775,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_resnet50_min5pct9.pth",
+    "promovido": true
+  },
+  "convnext_tiny_min5pct9": {
+    "timestamp": "2026-06-07T11:06:44",
+    "backbone": "convnext_tiny",
+    "class_config": "min5pct9",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8294796394820153,
+      "f1_macro": 0.5804947333803778,
+      "accuracy": 0.08131506849315069
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8504888553010941,
+      "auroc_macro_evaluable": 0.8788327498199388,
+      "pr_auc_macro_evaluable": 0.7330550643617414,
+      "f1_macro": 0.6021896428530321,
+      "f1_micro": 0.656,
+      "accuracy": 0.05917159763313609,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_convnext_tiny_min5pct9.pth",
+    "promovido": true
+  },
+  "swin_t_min5pct9": {
+    "timestamp": "2026-06-07T15:01:54",
+    "backbone": "swin_t",
+    "class_config": "min5pct9",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8321005275622907,
+      "f1_macro": 0.5870096708494102,
+      "accuracy": 0.09753424657534246
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.840356603841301,
+      "auroc_macro_evaluable": 0.867344317794572,
+      "pr_auc_macro_evaluable": 0.7313448240982934,
+      "f1_macro": 0.5941149022023576,
+      "f1_micro": 0.6424974823766365,
+      "accuracy": 0.10650887573964497,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_swin_t_min5pct9.pth",
+    "promovido": true
   }
 }
