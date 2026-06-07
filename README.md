@@ -44,20 +44,52 @@ entrénalo (sección 6). Las **imágenes del dataset** tampoco se versionan; sol
 
 ---
 
-## 2. Instalación con Docker (recomendado)
+## 2. Despliegue con Docker (recomendado)
+
+Hay dos formas de ejecutar la imagen. **Ambas montan el modelo y la configuración como
+volúmenes** (la imagen no incluye el `.pth`; ver la nota al final).
+
+### Opción A — Construir la imagen localmente (desde el código)
 
 ```bash
 git clone https://github.com/SkullSupernova/MDL_TFM.git
 cd MDL_TFM
-# Coloca el modelo en models/  (por ejemplo, models/mejor_modelo_densenet121.pth)
+# El modelo entrenado debe estar en models/ (por ejemplo,
+# models/mejor_modelo_densenet121_full13.pth, al que apunta config/config.yml).
 docker compose build
 docker compose up
 ```
 
+### Opción B — Usar la imagen publicada en GHCR (sin construir)
+
+La imagen se publica en GitHub Container Registry automáticamente al hacer `git push` a `main`
+(workflow `.github/workflows/docker-publish.yml`). Para usarla sin compilar:
+
+```bash
+# 1. Autenticarse en GHCR (paquete privado): token de GitHub con permiso read:packages.
+echo <TOKEN> | docker login ghcr.io -u <usuario_github> --password-stdin
+
+# 2. Descargar la imagen ya construida.
+docker pull ghcr.io/skullsupernova/mdl_tfm:latest
+
+# 3. Ejecutar (necesitas las carpetas models/ y config/ en el directorio actual).
+docker compose -f docker-compose.ghcr.yml up
+```
+
+> La Opción B solo funciona **después** de haber hecho `git push` a `main` al menos una vez (para
+> que el workflow construya y publique la imagen). Mientras tanto, usa la Opción A.
+
+### Acceso y parada (ambas opciones)
+
 - Interfaz web: [http://localhost:8501](http://localhost:8501)
 - API REST (documentación interactiva): [http://localhost:8000/docs](http://localhost:8000/docs)
+- Detener: `Ctrl + C`, o `docker compose down` (Opción A) /
+  `docker compose -f docker-compose.ghcr.yml down` (Opción B).
 
-Para detener: `Ctrl + C`, o `docker compose down`.
+> **El modelo no va dentro de la imagen.** El `.dockerignore` excluye `models/`, así que el
+> checkpoint se monta como volumen (`./models`) y la imagen se mantiene ligera (sin datos de
+> entrenamiento). El modelo servido se elige en `config/config.yml` (`model.checkpoint_path`),
+> también montado como volumen, de modo que puedes cambiarlo sin reconstruir la imagen.
 
 ---
 
@@ -184,7 +216,9 @@ MDL_TFM/
 │   ├── utils.py                 # ETL del dataset, métricas, callbacks
 │   └── logging_config.py        # Logging centralizado
 ├── test/                        # Suite de tests (pytest)
-├── Dockerfile, docker-compose.yml, requirements.txt, README.md
+├── Dockerfile, docker-compose.yml          # construir imagen localmente
+├── docker-compose.ghcr.yml                  # ejecutar imagen publicada en GHCR
+├── requirements.txt, README.md
 ```
 
 ---

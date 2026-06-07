@@ -1,0 +1,36 @@
+# Variante para ejecutar la imagen YA PUBLICADA en GitHub Container Registry (GHCR),
+# sin construirla localmente. Usa 'image:' en lugar de 'build:'.
+#
+# Requisitos:
+#   1. Haber hecho 'git push' a main al menos una vez (el workflow .github/workflows/
+#      docker-publish.yml construye y publica la imagen).
+#   2. 'docker login ghcr.io' (el paquete es privado -> token con permiso read:packages).
+#   3. Tener en el directorio actual las carpetas models/ (con el checkpoint) y config/.
+#
+# Uso:  docker compose -f docker-compose.ghcr.yml up
+#
+# El modelo no va dentro de la imagen (lo excluye .dockerignore): se monta como volumen,
+# igual que config/ (para poder cambiar de checkpoint sin reconstruir).
+
+services:
+  api:
+    image: ghcr.io/skullsupernova/mdl_tfm:latest
+    command: uvicorn src.api:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+
+  webapp:
+    image: ghcr.io/skullsupernova/mdl_tfm:latest
+    command: streamlit run src/app.py --server.address=0.0.0.0 --server.port=8501
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./models:/app/models:ro
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    depends_on:
+      - api
