@@ -17,6 +17,8 @@ Documentación complementaria:
 
 - **[docs/GUIA_USO.md](docs/GUIA_USO.md)**: manual de uso paso a paso (web, CLI, interpretación de resultados).
 - **[docs/ARQUITECTURA.md](docs/ARQUITECTURA.md)**: documento técnico (estructura, flujo de datos, pipeline, evaluación, decisiones de diseño).
+- **[docs/COMPARATIVA_ARQUITECTURAS.md](docs/COMPARATIVA_ARQUITECTURAS.md)**: informe de resultados de la comparación de arquitecturas (tablas con intervalos de confianza bootstrap y conclusiones).
+- **[docs/MAPA_PROYECTO.md](docs/MAPA_PROYECTO.md)**: guía de navegación del proyecto (dónde encontrar cada cosa: código, experimentos, resultados, modelos, datos, configuración).
 
 ---
 
@@ -212,6 +214,7 @@ MDL_TFM/
 │   ├── report.py                # Generación del informe PDF
 │   ├── image_utils.py           # Validación de imagen y empaquetado ZIP
 │   ├── preprocess_resize.py     # Pre-redimensionado del dataset a 224x224
+│   ├── bootstrap_ci.py          # Intervalos de confianza bootstrap del leaderboard
 │   ├── visualization.py         # Grad-CAM, matrices de confusión, curvas ROC/PR
 │   ├── utils.py                 # ETL del dataset, métricas, callbacks
 │   └── logging_config.py        # Logging centralizado
@@ -250,4 +253,4 @@ No requieren el dataset real (usan datos sintéticos):
 .venv/bin/pytest test/ -v                # Mac/Linux
 ```
 
-Resultado esperado: **113 passed**.
+Resultado esperado: **139 passed**.
