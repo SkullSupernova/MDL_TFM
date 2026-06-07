@@ -222,5 +222,33 @@
     },
     "checkpoint_path": "models/mejor_modelo_swin_t_min5pct9.pth",
     "promovido": true
+  },
+  "densenet121_full13": {
+    "timestamp": "2026-06-07T19:47:01",
+    "backbone": "densenet121",
+    "class_config": "full13",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8189841705192197,
+      "f1_macro": 0.4490474551627522,
+      "accuracy": 0.03250948620654292
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8451469142869797,
+      "auroc_macro_evaluable": 0.798783858012027,
+      "pr_auc_macro_evaluable": 0.6035394819740713,
+      "f1_macro": 0.45553400155973317,
+      "f1_micro": 0.5573248407643312,
+      "accuracy": 0.023668639053254437,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_densenet121_full13.pth",
+    "promovido": true
   }
 }
