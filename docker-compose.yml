@@ -6,6 +6,7 @@ services:
       - "8000:8000"
     volumes:
       - ./models:/app/models:ro
+      - ./config:/app/config:ro
       - ./logs:/app/logs
 
   webapp:
@@ -15,6 +16,7 @@ services:
       - "8501:8501"
     volumes:
       - ./models:/app/models:ro
+      - ./config:/app/config:ro
       - ./logs:/app/logs
     depends_on:
       - api

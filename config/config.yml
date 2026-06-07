@@ -28,7 +28,7 @@ model:
   dropout: 0.5
   hidden_units: 1024
   pretrained: true
-  checkpoint_path: "models/mejor_modelo_densenet121.pth"
+  checkpoint_path: "models/mejor_modelo_densenet121_full13.pth"
 
 training:
   batch_size: 64
