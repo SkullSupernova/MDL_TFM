@@ -271,8 +271,16 @@ Comparación de arquitecturas — **AUROC CheXpert-5 sobre el test silver** (169
 | **ConvNeXt-Tiny** | ~28 M | **0.8536** | **0.8505** |
 | ResNet-50 | ~25 M | 0.8517 | 0.8422 |
 | DenseNet-121 | ~7 M | 0.8497 | 0.8256 |
-| Swin-Tiny | ~28 M | 0.8438 | _(en curso / pendiente)_ |
-| VGG16-BN | ~138 M | _abandonado (~45 h)_ | — |
+| Swin-Tiny | ~28 M | 0.8438 | 0.8404 |
+| VGG16-BN | ~138 M | **NO entrenado** | **NO entrenado** |
+
+> **FALTA (pendiente/excluido): VGG16-BN.** No se entrenó en ninguna config. Con batch 64 en 8 GB su
+> coste estimado supera las ~45 h por run (≈20× DenseNet-121). Se excluye de la comparación de forma
+> justificada (las otras 4 arquitecturas cubren los paradigmas), pero la comparación es de **4
+> arquitecturas, no 5**. Si se quisiera completar, habría que entrenarlo (probablemente con `--batch-size`
+> reducido, lo que rompería la comparabilidad estricta).
+
+Ablación de configuración (solo DenseNet-121), AUROC CheXpert-5: full13 0.8451 · nofracture12 0.8497 · min5pct9 0.8256.
 
 Detalle adicional por run (val_auroc_best / F1-macro / PR-AUC-macro / duración):
 - DenseNet-121 nofracture12: 0.8183 / 0.4968 / 0.6136 / 131 min (early stop ép. 13).
@@ -282,23 +290,34 @@ Detalle adicional por run (val_auroc_best / F1-macro / PR-AUC-macro / duración)
 - DenseNet-121 min5pct9: 0.8252 / 0.5768 / 0.7038 / 96 min (ép. 14).
 - ResNet-50 min5pct9: 0.8275 / 0.6051 / 0.7091 / 85 min (ép. 13).
 - ConvNeXt-Tiny min5pct9: 0.8295 / 0.6022 / 0.7331 / 85 min (ép. 12).
+- Swin-Tiny min5pct9: 0.8321 / 0.5941 / 0.7313 / 235 min (ép. 18).
+- DenseNet-121 full13: 0.8190 / 0.4555 / 0.6035 / (ablación, 13 ép.).
 
-**Observaciones para la discusión:**
-- ConvNeXt-Tiny lidera la AUROC CheXpert-5 en ambas configs, pero las diferencias entre las cuatro
-  arquitecturas son pequeñas (~0.01) sobre un test de 169 imágenes → previsible **solapamiento de los IC
-  bootstrap** (Fase 5 pendiente); la conclusión honesta puede ser "equivalencia estadística".
-- Reducir clases (full13 → nofracture12 → min5pct9) **sube mucho F1-macro y PR-AUC** (de ~0.48–0.50 / ~0.62 a
-  ~0.60 / ~0.73) al eliminar clases raras difíciles, sin penalizar la AUROC CheXpert-5.
+Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en `docs/COMPARATIVA_ARQUITECTURAS.md`.
+
+**Observaciones para la discusión (confirmadas con IC bootstrap, Fase 5 hecha):**
+- Entre arquitecturas, los IC de AUROC CheXpert-5 **se solapan por completo** → **equivalencia estadística**;
+  ninguna es significativamente superior. ConvNeXt-Tiny lidera el punto estimado sin distinguirse del resto.
+- Reducir clases (full13 → nofracture12 → min5pct9) **sube F1-macro y PR-AUC** (de ~0.48–0.50 / ~0.62 a
+  ~0.60 / ~0.73) y la AUROC-macro de forma **estadísticamente significativa** (IC no solapados en ConvNeXt),
+  sin penalizar la AUROC CheXpert-5. El cambio de **config** pesa más que el de **arquitectura**.
 
 ---
 
 ## 13. Estado del proyecto y trabajo pendiente
 
 - **Fases 1–9 (implementación) + Fase 3 (pipeline de comparación):** completas.
-- **Fase 4 (entrenamientos):** en curso — completadas las 4 arquitecturas rápidas en nofracture12 y la mayor
-  parte de min5pct9; VGG16-BN abandonado por coste (~45 h). Seguimiento en `.claude/ESTADO_PROYECTO.md` §10.
-- **Fase 5 (pendiente):** agregar `leaderboard.csv` con **intervalos de confianza bootstrap** sobre el test.
-- **Fase 6 (pendiente):** informe comparativo + actualización de documentación.
+- **Fase 4 (entrenamientos):** ✅ completa — 4 arquitecturas × {nofracture12, min5pct9} + ablación
+  DenseNet-121 en full13. **Falta VGG16-BN** (NO entrenado; excluido por coste, ver §12).
+- **Fase 5 (IC bootstrap):** ✅ completa — `src/bootstrap_ci.py` + tests; `experiments/leaderboard_ci.csv`.
+- **Fase 6 (informe comparativo):** ✅ completa — `docs/COMPARATIVA_ARQUITECTURAS.md`.
+- **Fase 7 (despliegue):** 🔄 parcial — workflow GHCR escrito (`.github/workflows/docker-publish.yml`, sin
+  push). **Falta:** 7.1 verificar Docker local (`docker compose build`+`up`), 7.3 instrucciones de
+  `docker pull` en el README.
+
+**Otros pendientes (no bloqueantes):** entrenar VGG16-BN si se desea cerrar las 5 arquitecturas;
+`test/test_api.py`; limpiar `docs/arquitectura_propuesta.txt` y revisar `requirements.txt`;
+(opcional) integrar el test/gold oficial de 500 estudios.
 
 > Para el detalle vivo de avances/pendientes/decisiones, la fuente es `.claude/ESTADO_PROYECTO.md`.
 > Para el detalle técnico narrativo, `docs/ARQUITECTURA.md`. Para uso, `docs/GUIA_USO.md`.
