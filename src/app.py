@@ -241,6 +241,10 @@ def main() -> None:
     )
     info = configs_disponibles[config_sel]
     checkpoint_path = info["path"]
+    modelo_label = (
+        f"{_BACKBONE_LABELS.get(backbone_sel, backbone_sel)} · "
+        f"{_CLASS_CONFIG_LABELS.get(config_sel, config_sel or 'formato antiguo')}"
+    )
 
     cfg, model, target_layers, device, labels = _load_model(
         checkpoint_path, info["backbone"], info["class_config"]
@@ -260,17 +264,17 @@ def main() -> None:
         "Umbral de clasificación", min_value=0.0, max_value=1.0,
         value=default_threshold, step=0.01,
     )
-    # Tope de paneles Grad-CAM. Se explican las patologías detectadas (prob ≥ umbral);
-    # si hay menos de min_panels, se completa hasta ese mínimo; nunca más que este tope.
-    # Cada panel añade una pasada de Grad-CAM (coste en CPU).
-    min_panels = min(5, len(labels))
+    # Tope de paneles Grad-CAM: solo se generan mapas de las patologías por encima del
+    # umbral (prob ≥ umbral); este valor limita cuántas se muestran, por coste de CPU
+    # (cada panel es una pasada de Grad-CAM).
     max_panels = st.sidebar.slider(
         "Máximo de paneles (Grad-CAM)",
-        min_value=min_panels, max_value=len(labels),
+        min_value=1, max_value=len(labels),
         value=min(8, len(labels)), step=1,
         help=(
-            "Se muestran las patologías detectadas (prob ≥ umbral); si hay menos de "
-            f"{min_panels}, se completa hasta {min_panels}. Este valor es el tope máximo."
+            "Solo se muestran las patologías cuya probabilidad supera el umbral, las más "
+            "probables primero. Baja el umbral para ver más patologías; súbelo para ver "
+            "solo las más confiadas."
         ),
     )
 
@@ -344,45 +348,53 @@ def main() -> None:
     # ==================================================================
     # PASO 6: EXPLICABILIDAD — original (izq.) + Grad-CAM (der.) por patología
     # ==================================================================
-    # Se explican las patologías DETECTADAS (prob ≥ umbral); si hay menos de min_panels se
-    # completa hasta ese mínimo con las siguientes más probables, sin superar max_panels.
-    # Como las detectadas son siempre las de mayor probabilidad, basta tomar las n_show
-    # primeras del orden descendente. argsort ascendente + inversión = orden descendente.
-    n_show = min(max(len(detected), min_panels), max_panels, len(labels))
-    orden = np.argsort(probs)[::-1][:n_show]
-    # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
-    # las CNN devuelven None. Se calcula una vez y se reutiliza en cada panel.
-    reshape = get_grad_cam_reshape(info["backbone"])
-    with st.spinner(f"Generando {len(orden)} mapas Grad-CAM…"):
-        panels = []
-        for idx in orden:
-            # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
-            mask = _compute_grad_cam(
-                model, tensor, target_layers, int(idx), device, reshape_transform=reshape
-            )
-            # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
-            # que más influyeron en la predicción de esa patología.
-            heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
-            panels.append({
-                "label": labels[int(idx)],
-                "prob": float(probs[int(idx)]),
-                "heatmap": heat,
-            })
-
     st.divider()
-    st.subheader(f"Explicabilidad visual — {len(panels)} patologías")
-    st.caption(
-        f"Patologías detectadas (prob ≥ umbral), con un mínimo de {min_panels}. "
-        "Izquierda: radiografía original. Derecha: mapa de calor Grad-CAM. "
-        "🔴 rojo = mayor influencia en la predicción · 🔵 azul = menor influencia."
-    )
-    for p in panels:
-        st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(img_resized, use_container_width=True, caption="Original")
-        with col2:
-            st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
+    st.subheader("Explicabilidad visual")
+    # Solo se generan mapas Grad-CAM de las patologías por encima del umbral, las más
+    # probables primero y hasta el tope max_panels. Si ninguna lo supera, no hay paneles.
+    # 'panels' se deja definido (posiblemente vacío) porque lo usan el informe PDF y el ZIP.
+    panels = []
+    if detected:
+        n_show = min(len(detected), max_panels)
+        orden = np.argsort(probs)[::-1][:n_show]
+        # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
+        # las CNN devuelven None. Se calcula una vez y se reutiliza en cada panel.
+        reshape = get_grad_cam_reshape(info["backbone"])
+        with st.spinner(f"Generando {n_show} mapas Grad-CAM…"):
+            for idx in orden:
+                # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
+                mask = _compute_grad_cam(
+                    model, tensor, target_layers, int(idx), device, reshape_transform=reshape
+                )
+                # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
+                # que más influyeron en la predicción de esa patología.
+                heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+                panels.append({
+                    "label": labels[int(idx)],
+                    "prob": float(probs[int(idx)]),
+                    "heatmap": heat,
+                })
+        ocultas = len(detected) - len(panels)
+        nota_tope = f" (se omiten {ocultas} por el tope de paneles)" if ocultas > 0 else ""
+        st.caption(
+            f"Solo se muestran las {len(panels)} patología(s) cuya probabilidad supera el "
+            f"umbral de {threshold:.2f}{nota_tope}. Ajusta el umbral en la barra lateral "
+            "para ver más o menos. Izquierda: radiografía original. Derecha: mapa de calor "
+            "Grad-CAM. 🔴 rojo = mayor influencia · 🔵 azul = menor influencia."
+        )
+        for p in panels:
+            st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image(img_resized, use_container_width=True, caption="Original")
+            with col2:
+                st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
+    else:
+        st.info(
+            f"Ninguna patología supera el umbral de {threshold:.2f}, así que no se muestran "
+            "mapas Grad-CAM. Baja el umbral en la barra lateral para visualizar las "
+            "patologías más probables."
+        )
 
     # ==================================================================
     # PASO 7: PROBABILIDADES POR PATOLOGÍA
@@ -498,7 +510,7 @@ def main() -> None:
         st.session_state.history = []
 
     st.session_state.history.append({
-        "Modelo": selected_label,
+        "Modelo": modelo_label,
         "Imagen": uploaded.name,
         "Hora": pd.Timestamp.now().strftime("%H:%M:%S"),
         "Detectadas": ", ".join(detected) if detected else "—",
