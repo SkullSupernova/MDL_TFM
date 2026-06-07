@@ -74,12 +74,19 @@ def _bar_chart_png(filas: List[Dict]) -> bytes:
 
     fig, ax = plt.subplots(figsize=(7.2, max(2.5, 0.34 * len(labels))))
     y = np.arange(len(labels))
-    ax.barh(y, probs, color=colores)
+    # zorder alto + set_axisbelow para que las barras queden por encima de la cuadrícula.
+    bars = ax.barh(y, probs, color=colores, zorder=3)
     ax.set_yticks(y)
     ax.set_yticklabels(labels, fontsize=8)
     ax.invert_yaxis()  # la patología más probable arriba
-    ax.set_xlim(0, 1)
+    # Margen extra (1.08) para que la etiqueta de valor de las barras largas no se recorte.
+    ax.set_xlim(0, 1.08)
+    ax.set_xticks(np.arange(0, 1.01, 0.2))
     ax.set_xlabel("Probabilidad", fontsize=9)
+    ax.grid(axis="x", linestyle="--", linewidth=0.6, color="#b0b0b0", alpha=0.7)
+    ax.set_axisbelow(True)
+    # Valor exacto de cada barra al final de la misma.
+    ax.bar_label(bars, labels=[f"{p:.2f}" for p in probs], padding=3, fontsize=7, color="#333333")
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
     fig.tight_layout()
