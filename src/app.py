@@ -56,6 +56,40 @@ _EVAL_TRANSFORM = transforms.Compose([
 ])
 
 
+# Etiquetas legibles para los desplegables de la barra lateral. La selección de modelo se
+# presenta en dos pasos (arquitectura -> clases entrenadas) en lugar de una lista plana,
+# porque con varias arquitecturas y configuraciones la lista única resulta poco manejable.
+_BACKBONE_LABELS = {
+    "densenet121": "DenseNet-121",
+    "resnet50": "ResNet-50",
+    "convnext_tiny": "ConvNeXt-Tiny",
+    "swin_t": "Swin-Tiny",
+    "vgg16_bn": "VGG16-BN",
+}
+_CLASS_CONFIG_LABELS = {
+    "full13": "13 clases (full13)",
+    "nofracture12": "12 clases (sin Fracture)",
+    "min5pct9": "9 clases (prevalencia ≥5%)",
+}
+_CLASS_CONFIG_ORDER = ["full13", "nofracture12", "min5pct9"]
+
+
+def _agrupar_modelos_por_arquitectura(available_models: dict) -> dict:
+    """Agrupa los modelos descubiertos por backbone: {backbone: {class_config: info}}."""
+    por_arquitectura: dict = {}
+    for info in available_models.values():
+        por_arquitectura.setdefault(info["backbone"], {})[info["class_config"]] = info
+    return por_arquitectura
+
+
+def _ordenar_class_configs(configs) -> list:
+    """Ordena las configuraciones para el desplegable: full13, nofracture12, min5pct9 y luego el resto."""
+    return sorted(
+        configs,
+        key=lambda c: _CLASS_CONFIG_ORDER.index(c) if c in _CLASS_CONFIG_ORDER else len(_CLASS_CONFIG_ORDER),
+    )
+
+
 def _discover_models() -> dict[str, dict]:
     """
     Busca checkpoints de producción en models/ y deduce su backbone y class_config.
@@ -192,11 +226,20 @@ def main() -> None:
     # ==================================================================
     st.sidebar.header("Parámetros")
 
-    # Selector de modelo: lista todos los .pth disponibles en models/.
-    # Al cambiar el modelo, @st.cache_resource devuelve la instancia ya cargada
-    # si ese checkpoint ya fue procesado antes, o carga una nueva en caso contrario.
-    selected_label = st.sidebar.selectbox("Modelo", list(available_models.keys()))
-    info = available_models[selected_label]
+    # Selección en dos pasos: arquitectura y luego configuración de clases. El segundo
+    # desplegable es dinámico (solo las configuraciones disponibles para la arquitectura
+    # elegida), porque la matriz arquitectura x config no está completa.
+    por_arquitectura = _agrupar_modelos_por_arquitectura(available_models)
+    backbone_sel = st.sidebar.selectbox(
+        "Arquitectura", sorted(por_arquitectura),
+        format_func=lambda b: _BACKBONE_LABELS.get(b, b),
+    )
+    configs_disponibles = por_arquitectura[backbone_sel]
+    config_sel = st.sidebar.selectbox(
+        "Clases entrenadas", _ordenar_class_configs(configs_disponibles),
+        format_func=lambda c: _CLASS_CONFIG_LABELS.get(c, c or "formato antiguo"),
+    )
+    info = configs_disponibles[config_sel]
     checkpoint_path = info["path"]
 
     cfg, model, target_layers, device, labels = _load_model(
