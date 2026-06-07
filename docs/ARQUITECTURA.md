@@ -10,10 +10,12 @@ generación de informes y las decisiones de diseño. Para el uso del sistema, ve
 ## 1. Visión general
 
 Clasificación **multietiqueta** de 13 patologías torácicas a partir de radiografías frontales del dataset
-CheXpert. La arquitectura de referencia es DenseNet-121, con soporte para comparar VGG16, ResNet-50 y
-ConvNeXt-Tiny. El sistema añade explicabilidad (Grad-CAM), una capa de evaluación sobre un test
+CheXpert. La arquitectura de referencia es DenseNet-121; el pipeline soporta **cinco backbones
+intercambiables** (DenseNet-121, VGG16-BN, ResNet-50, ConvNeXt-Tiny y Swin-Tiny), seleccionables desde
+`config.yml` o `--model`. El sistema añade explicabilidad (Grad-CAM), una capa de evaluación sobre un test
 "silver-standard", un gate de promoción del mejor modelo, un sistema de seguimiento de experimentos, una API
-REST y una interfaz web.
+REST y una interfaz web. Los resultados de la comparación de arquitecturas (con intervalos de confianza
+bootstrap) están en [COMPARATIVA_ARQUITECTURAS.md](COMPARATIVA_ARQUITECTURAS.md).
 
 **Patologías activas (13):** No Finding, Enlarged Cardiomediastinum, Cardiomegaly, Lung Opacity, Lung Lesion,
 Edema, Consolidation, Pneumonia, Atelectasis, Pneumothorax, Pleural Effusion, Fracture, Support Devices.
@@ -65,6 +67,8 @@ Consolidation, Edema, Pleural Effusion) se usan como métrica principal de promo
 - **`model_registry.py`** — Registro del campeón (`best_model_registry.json`), comparación `es_mejor` (gate) e
   historial append-only (`experiments.jsonl`). Indexado por par `(backbone, class_config)`.
 - **`experiment_tracker.py`** — `ExperimentTracker`: genera `experiments/<run_id>/` y `leaderboard.csv`.
+- **`bootstrap_ci.py`** — agregación post-hoc: lee las predicciones de test guardadas por cada run y calcula
+  intervalos de confianza **bootstrap** (AUROC CheXpert-5, AUROC-macro, PR-AUC-macro) → `leaderboard_ci.csv`.
 - **`report.py`** — `build_report_pdf`: informe PDF (reportlab) de un análisis de la web.
 - **`image_utils.py`** — `validar_imagen_radiografia` (validación de entrada) y `empaquetar_imagenes_zip`.
 - **`preprocess_resize.py`** — `resize_tree` y CLI de pre-redimensionado del dataset a 224x224.
@@ -233,3 +237,21 @@ negativo (0), incierto (-1) y no mencionado (en blanco).
   clases habría que derivar las etiquetas de la `class_config`, como ya hace la interfaz web (`app.py`).
 - La comparación de arquitecturas se realiza con una sola semilla; la incertidumbre se estima por bootstrap
   sobre el test, no entre semillas.
+
+---
+
+## 15. Despliegue (Docker y GHCR)
+
+La imagen Docker (`python:3.12-slim`, PyTorch CPU) empaqueta `src/` y `config/`. El `.dockerignore` excluye
+`models/`, por lo que **el checkpoint no va dentro de la imagen**: se monta como volumen, igual que `config/`
+(lo que permite cambiar el modelo servido sin reconstruir). Dos formas de ejecutar:
+
+- **Opción A — construir en local:** `docker compose build && docker compose up`. Servicios `api` (uvicorn,
+  puerto 8000) y `webapp` (Streamlit, 8501), ambos montan `models/`, `config/` y `logs/`.
+- **Opción B — imagen publicada en GHCR:** `docker compose -f docker-compose.ghcr.yml up` (usa
+  `image: ghcr.io/skullsupernova/mdl_tfm:latest`; requiere `docker login ghcr.io`).
+
+**CI/CD (`.github/workflows/`):** `ci.yml` ejecuta la suite pytest en CPU en cada push/PR; `docker-publish.yml`
+construye y publica la imagen en GitHub Container Registry en push a `main`, tags `v*` o manualmente
+(`workflow_dispatch`). El modelo servido por defecto es `models/mejor_modelo_densenet121_full13.pth`.
+Guía de uso paso a paso (login, pull) en [../README.md](../README.md) §2.
