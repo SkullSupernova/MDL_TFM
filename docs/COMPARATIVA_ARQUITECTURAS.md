@@ -2,8 +2,9 @@
 
 > Informe de la Fase 6 del plan de comparación. Resume los resultados experimentales con
 > intervalos de confianza bootstrap y deriva las conclusiones para la memoria del TFM.
-> **Estado: BORRADOR** — falta el run DenseNet-121 `full13` (en curso); su fila se marca como
-> pendiente. Fuentes: `experiments/leaderboard.csv` y `experiments/leaderboard_ci.csv`.
+> **Estado: COMPLETO** — 9 runs reales de comparación (4 arquitecturas × {nofracture12, min5pct9}
+> + ablación DenseNet-121 en full13); VGG16-BN excluido por coste. Fuentes: `experiments/leaderboard.csv`
+> y `experiments/leaderboard_ci.csv`.
 
 ---
 
@@ -77,9 +78,15 @@ AUROC, PR-AUC con intervalo de confianza bootstrap 95 % sobre el test silver (16
 
 | Config | Clases | AUROC CheXpert-5 [IC 95%] | AUROC-macro [IC 95%] | PR-AUC-macro [IC 95%] | F1-macro |
 |--------|:---:|:---:|:---:|:---:|:---:|
-| full13 | 13 | _(pendiente — run en curso)_ | _pendiente_ | _pendiente_ | _pendiente_ |
+| full13 | 13 | 0.8451 [0.814, 0.873] | 0.7988 [0.773, 0.857] | 0.6035 [0.574, 0.705] | 0.4555 |
 | nofracture12 | 12 | 0.8497 [0.821, 0.877] | 0.8229 [0.803, 0.865] | 0.6136 [0.583, 0.724] | 0.4968 |
 | min5pct9 | 9 | 0.8256 [0.793, 0.855] | 0.8578 [0.829, 0.883] | 0.7038 [0.653, 0.775] | 0.5768 |
+
+**Tendencia de la ablación (DenseNet-121):** al reducir el número de clases (13 → 12 → 9), las
+métricas macro y el F1-macro crecen de forma monótona (AUROC-macro 0.799 → 0.823 → 0.858; F1-macro
+0.456 → 0.497 → 0.577), confirmando que las clases raras y mal soportadas penalizan los promedios. La
+AUROC CheXpert-5 se mantiene estable (0.845 / 0.850 / 0.826; IC solapados), porque las 5 patologías
+oficiales están presentes en las tres configuraciones.
 
 ---
 
