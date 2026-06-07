@@ -12,32 +12,65 @@
 Clasificación **multietiqueta** de 13 patologías torácicas a partir de radiografías de tórax del dataset
 **CheXpert** (Stanford), con explicabilidad **Grad-CAM**, evaluación sobre un test *silver-standard*, un gate
 de promoción automático del mejor modelo, sistema de seguimiento de experimentos, **API REST** (FastAPI) e
-**interfaz web** (Streamlit). Incluye una comparación de **5 arquitecturas** × **3 configuraciones de clases**.
+**interfaz web** (Streamlit). Incluye una comparación de **5 arquitecturas soportadas** (4 entrenadas;
+VGG16-BN excluido por coste) × **3 configuraciones de clases** (13 / 12 / 9).
+
+---
+
+## Guía de navegación: ¿dónde encuentro cada cosa?
+
+> El agente que asiste el TFM se ejecuta **en local y ve todo el árbol del proyecto**, incluidas las
+> carpetas **no versionadas** (gitignored). Esas carpetas no estarían en un clon público, **pero sí
+> están en este disco** y son las fuentes de resultados y estado más ricas.
+
+| Necesito… | Está en… |
+|-----------|----------|
+| Doc técnica (pipeline, diseño, módulos) | `docs/ARQUITECTURA.md` |
+| Doc funcional (uso web/API/CLI, métricas) | `docs/GUIA_USO.md`, `README.md` |
+| **Resultados sintetizados (tablas + IC, conclusiones)** | `docs/COMPARATIVA_ARQUITECTURAS.md` |
+| **Resultados crudos y figuras por run** | `experiments/<run_id>/` (`plots/`, `*_per_class.csv`, `report.md`) *(local)* |
+| Índice de runs + IC bootstrap | `experiments/leaderboard.csv`, `experiments/leaderboard_ci.csv` *(local)* |
+| Métricas por clase del test | `logs/test_metrics_<backbone>_<config>.csv` *(local)* |
+| Estado, decisiones y próximos pasos | `.claude/ESTADO_PROYECTO.md`, `CLAUDE.md` *(local)* |
+| Modelos entrenados | `models/*.pth` *(local)*; registro en `models/best_model_registry.json` |
+| Datasets y transformaciones | `chexpert_csv/` (etiquetas); ETL en `src/utils.py`; transforms en `src/main.py` y `src/models.py`; imágenes en `C:/CheXpertDataset/` *(fuera del repo)* |
+| Configuración de entrenamiento | `config/config.yml` |
+| Scripts auxiliares (no son la app) | `src/preprocess_resize.py` (pre-resize), `src/bootstrap_ci.py` (IC bootstrap) |
+| Despliegue (Docker / GHCR) | `Dockerfile`, `docker-compose.yml`, `docker-compose.ghcr.yml`, `.github/workflows/docker-publish.yml`, `README.md` §2 |
+| Recursos del TFM (notebooks, ejemplos) | `notebook/`, `muestras_busqueda/`, `docs/` |
+
+> **Aviso sobre `experiments/`:** no todas las carpetas son runs completos. Hay **2 incompletas**
+> (`…_vgg16_bn_nofracture12`, abandonado; `…-150200_densenet121_full13`, interrumpido y reanudado en
+> `…-193649`) y un smoke test (`…_calibracion`, 1 época). **`leaderboard.csv` es el índice
+> autoritativo** de los 9 runs de comparación completos y promovidos.
 
 ---
 
 ## 1. Mapa de directorios (raíz)
 
-| Ruta | Versionado | Contenido |
+| Ruta | En el repo | Contenido |
 |------|:---:|-----------|
-| `src/` | sí | Todo el código fuente (15 módulos). Ver §2. |
+| `src/` | sí | Código fuente (16 ficheros .py). Ver §2. |
 | `config/config.yml` | sí | Único punto de configuración (datos, modelo, entrenamiento, experimentos). Ver §3. |
 | `test/` | sí | Suite pytest (datos sintéticos, sin dataset real). Ver §4. |
-| `docs/` | sí | `ARQUITECTURA.md` (técnico), `GUIA_USO.md` (manual), este `MAPA_PROYECTO.md`. |
-| `README.md` | sí | Documentación de usuario (instalación, quick start). |
-| `CLAUDE.md` | sí | Instrucciones del repo (contexto, fases, reglas de estilo y commits). |
+| `docs/` | sí | `ARQUITECTURA.md` (técnico), `GUIA_USO.md` (manual), `COMPARATIVA_ARQUITECTURAS.md` (resultados), este `MAPA_PROYECTO.md` (navegación). |
+| `README.md` | sí | Documentación de usuario (instalación, quick start, despliegue). |
 | `notebook/` | sí | Cuadernos del análisis/prototipo original. Ver §8. |
 | `chexpert_csv/` | sí | CSV de etiquetas del dataset (`train_cheXbert.csv`). Ver §7. |
 | `muestras_busqueda/` | sí | ~60 radiografías frontales de ejemplo para probar la web. |
-| `.github/workflows/ci.yml` | sí | CI en GitHub Actions (pytest sobre CPU). |
-| `Dockerfile`, `docker-compose.yml`, `.dockerignore` | sí | Despliegue. Ver §9. |
-| `requirements.txt`, `requirements-dev.txt` | sí | Dependencias prod / dev. |
-| `pytest.ini` | sí | Configuración de pytest. |
-| `models/` | **no** (`.gitignore`) | Checkpoints `.pth` (excepto `best_model_registry.json`, que sí se versiona). Ver §5. |
-| `experiments/` | **no** | Una carpeta autocontenida por run + `leaderboard.csv`. Ver §6. |
-| `logs/` | **no** | `app.log`, `experiments.jsonl`, `test_metrics_*.csv`. |
-| `data/` | **no** | (Reservado; las imágenes reales viven fuera del repo, en `C:/CheXpertDataset/`.) |
-| `.claude/ESTADO_PROYECTO.md` | **no** | Estado de continuidad entre sesiones (avances, pendientes, decisiones, §10 plan de comparación). |
+| `.github/workflows/` | sí | `ci.yml` (tests en CPU) y `docker-publish.yml` (publica imagen en GHCR). |
+| `Dockerfile`, `docker-compose.yml`, `docker-compose.ghcr.yml`, `.dockerignore` | sí | Despliegue. Ver §9. |
+| `requirements.txt`, `requirements-dev.txt`, `pytest.ini` | sí | Dependencias y configuración de pytest. |
+| `models/` | parcial | Solo `best_model_registry.json` está en el repo; los `.pth` son **locales**. Ver §5. |
+| `experiments/` | **local** | Carpeta por run + `leaderboard.csv` + `leaderboard_ci.csv`. Ver §6. |
+| `logs/` | **local** | `app.log`, `experiments.jsonl`, `test_metrics_*.csv`. |
+| `.claude/ESTADO_PROYECTO.md` | **local** | Estado vivo (avances, pendientes, decisiones, plan de comparación). |
+| `CLAUDE.md` | **local** | Instrucciones del repo (contexto, fases, reglas de estilo y commits). |
+| `data/` | **local** | (Reservado; las imágenes reales viven fuera del repo, en `C:/CheXpertDataset/`.) |
+
+> **"local"** = no está en el repositorio público (gitignored), **pero sí en este disco** y accesible para
+> el agente. Las carpetas locales (`experiments/`, `models/`, `logs/`, `.claude/`) son las fuentes de
+> resultados y estado más ricas.
 
 ---
 
@@ -89,6 +122,9 @@ de promoción automático del mejor modelo, sistema de seguimiento de experiment
   par `(backbone, class_config)`. Escribe `models/best_model_registry.json`.
 - `experiment_tracker.py` — clase `ExperimentTracker`: genera todo `experiments/<run_id>/` y la fila de
   `leaderboard.csv`. Ver §6 para el contenido.
+- `bootstrap_ci.py` — agregación post-hoc (Fase 5): lee las predicciones de test de cada run y calcula
+  intervalos de confianza **bootstrap** (AUROC CheXpert-5, AUROC-macro, PR-AUC-macro) →
+  `experiments/leaderboard_ci.csv`. Uso: `python -m src.bootstrap_ci --n-boot 2000 --seed 42`.
 
 ### 2.6. Visualización e informes
 - `visualization.py` — `graficar_entrenamiento()` (curvas), `plot_confusion_matrices()`, `plot_roc_curves()`,
@@ -126,10 +162,10 @@ de promoción automático del mejor modelo, sistema de seguimiento de experiment
 ## 4. Tests — `test/`
 
 `test_models.py`, `test_utils.py`, `test_train.py`, `test_evaluate.py`, `test_registry.py`,
-`test_experiment_tracker.py`, `test_image_utils.py`, `test_report.py`, `test_preprocess_resize.py`.
-`conftest.py` (fixtures compartidas). Ejecutar: `.venv\Scripts\pytest.exe test/ -v`. No dependen del dataset
-real (datos sintéticos / `tmp_path`). El README reporta **113 passed** (el plan de la fase de arquitecturas
-menciona 118 tras añadir Swin/VGG; el número exacto depende del estado del repo).
+`test_experiment_tracker.py`, `test_image_utils.py`, `test_report.py`, `test_preprocess_resize.py`,
+`test_bootstrap_ci.py`, `test_app.py`. `conftest.py` (fixtures compartidas). Ejecutar:
+`.venv\Scripts\pytest.exe test/ -v`. No dependen del dataset real (datos sintéticos / `tmp_path`).
+Estado actual: **139 passed**.
 
 ---
 
@@ -167,9 +203,16 @@ plots/  learning_curves.png · roc_curves_test.png · pr_curves_test.png ·
 report.md                                informe legible por run (incluye clases no evaluables)
 ```
 
-**Índice cross-run:** `experiments/leaderboard.csv` — una fila por run con columnas: `run_id, timestamp,
-backbone, class_config, tag, epochs_ejecutadas, lr, batch_size, seed, val_auroc_best, test_auroc_chexpert5,
-test_auroc_macro, test_pr_auc_macro, test_f1_macro, duracion_min, promovido, git_commit`.
+**Índices cross-run (ficheros sueltos en `experiments/`):**
+- `leaderboard.csv` — una fila por run completo: `run_id, timestamp, backbone, class_config, tag,
+  epochs_ejecutadas, lr, batch_size, seed, val_auroc_best, test_auroc_chexpert5, test_auroc_macro,
+  test_pr_auc_macro, test_f1_macro, duracion_min, promovido, git_commit`. **Es el índice autoritativo.**
+- `leaderboard_ci.csv` — generado por `src/bootstrap_ci.py`: añade intervalos de confianza bootstrap 95 %
+  (AUROC CheXpert-5, AUROC-macro, PR-AUC-macro) por run.
+
+**Carpetas incompletas:** algunas carpetas `<run_id>/` corresponden a runs no terminados y **no aparecen en
+`leaderboard.csv`**: `…_vgg16_bn_nofracture12` (abandonado), `…-150200_densenet121_full13` (interrumpido;
+reanudado en `…-193649`) y `…_calibracion` (smoke test de 1 época). Usar `leaderboard.csv` como referencia.
 
 ---
 
@@ -221,12 +264,20 @@ columnas pero no elimina imágenes.
 ## 9. Despliegue
 
 - **`Dockerfile`** — imagen `python:3.12-slim`, instala PyTorch **CPU** + dependencias; copia `src/` y `config/`.
-- **`docker-compose.yml`** — dos servicios: `api` (uvicorn, puerto **8000**) y `webapp` (streamlit, puerto
-  **8501**), ambos montan `models/` (read-only) y `logs/`. `webapp` depende de `api`.
-- **Arranque local:** `streamlit run src/app.py` (web), `uvicorn src.api:app --reload` (API).
+- **`docker-compose.yml`** (Opción A, construir local) — servicios `api` (uvicorn, **8000**) y `webapp`
+  (streamlit, **8501**); ambos montan `models/`, `config/` y `logs/` como volúmenes. `webapp` depende de `api`.
+  El montaje de `config/` permite cambiar de modelo (`model.checkpoint_path`) **sin reconstruir** la imagen.
+- **`docker-compose.ghcr.yml`** (Opción B, imagen publicada) — usa `image: ghcr.io/skullsupernova/mdl_tfm:latest`
+  en vez de `build:`. Requiere `docker login ghcr.io` (paquete privado). Uso: `docker compose -f docker-compose.ghcr.yml up`.
+- **`.github/workflows/docker-publish.yml`** — construye y **publica la imagen en GHCR** en push a `main`,
+  tags `v*` o manualmente (`workflow_dispatch`). El `.dockerignore` excluye `models/`, así que el modelo no va
+  en la imagen (se monta como volumen).
+- **Arranque local sin Docker:** `streamlit run src/app.py` (web), `uvicorn src.api:app --reload` (API).
 - **CI:** `.github/workflows/ci.yml` ejecuta la suite pytest en CPU (no despliega).
 - **Limitación documentada:** `api.py` asume checkpoint de 13/14 clases (usa `get_pathology_labels`); para
   servir modelos de 12 o 9 clases habría que derivar las etiquetas de la `class_config` (la web ya lo hace).
+- **Modelo servido por defecto:** `config.model.checkpoint_path` → `models/mejor_modelo_densenet121_full13.pth`
+  (campeón real de 13 clases). Detalle de uso (Opciones A/B, login, pull) en `README.md` §2.
 
 ---
 
@@ -311,9 +362,9 @@ Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en 
   DenseNet-121 en full13. **Falta VGG16-BN** (NO entrenado; excluido por coste, ver §12).
 - **Fase 5 (IC bootstrap):** ✅ completa — `src/bootstrap_ci.py` + tests; `experiments/leaderboard_ci.csv`.
 - **Fase 6 (informe comparativo):** ✅ completa — `docs/COMPARATIVA_ARQUITECTURAS.md`.
-- **Fase 7 (despliegue):** 🔄 parcial — workflow GHCR escrito (`.github/workflows/docker-publish.yml`, sin
-  push). **Falta:** 7.1 verificar Docker local (`docker compose build`+`up`), 7.3 instrucciones de
-  `docker pull` en el README.
+- **Fase 7 (despliegue):** ✅ completa — Docker local verificado (build + `up` + `/health` + `/predict` con
+  modelo real), workflow GHCR funcionando (ejecutado con éxito; imagen publicada), README con Opciones A/B y
+  `docker-compose.ghcr.yml`. **Pendiente opcional:** `git push` automático ya publica; el paquete GHCR es privado.
 
 **Otros pendientes (no bloqueantes):** entrenar VGG16-BN si se desea cerrar las 5 arquitecturas;
 `test/test_api.py`; limpiar `docs/arquitectura_propuesta.txt` y revisar `requirements.txt`;
