@@ -35,6 +35,10 @@ Arranque: `streamlit run src/app.py` (o mediante Docker; ver README). Se abre en
 5. Revisa los resultados (sección 2.2) y, si quieres, **descarga** el informe PDF, el ZIP de imágenes o el CSV
    del historial.
 
+**Comparar dos modelos (opcional):** activa *Comparar con un segundo modelo* en la barra lateral y elige un
+segundo (arquitectura + clases). Tras cargar la imagen aparece una sección **Comparación de modelos** con una
+gráfica de barras de ambos sobre las patologías comunes y un resumen de cuántas decisiones coinciden al umbral.
+
 El tema claro u oscuro se cambia desde el menú de la esquina superior derecha, en Settings, Theme.
 
 ### 2.2. Qué se muestra
@@ -47,7 +51,10 @@ El tema claro u oscuro se cambia desde el menú de la esquina superior derecha, 
   de esa patología; las frías (azules), las que menos.
 - **Probabilidades por patología**: gráfico de barras con el porcentaje de cada clase (verde = detectada,
   gris = no detectada) y tabla detallada. El informe PDF incluye este mismo gráfico con cuadrícula y el valor
-  numérico de cada barra.
+  numérico de cada barra. La gráfica aparece **antes** de los mapas Grad-CAM para verla sin bajar hasta el final.
+- **Comparación de modelos** (si está activada): gráfica de barras agrupada con las probabilidades de los dos
+  modelos sobre las patologías que ambos predicen, el número de decisiones coincidentes al umbral y una tabla
+  con la diferencia |A−B| por patología.
 
 ---
 
