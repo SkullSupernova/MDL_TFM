@@ -323,13 +323,12 @@ Comparación de arquitecturas — **AUROC CheXpert-5 sobre el test silver** (169
 | ResNet-50 | ~25 M | 0.8517 | 0.8422 |
 | DenseNet-121 | ~7 M | 0.8497 | 0.8256 |
 | Swin-Tiny | ~28 M | 0.8438 | 0.8404 |
-| VGG16-BN | ~138 M | **NO entrenado** | **NO entrenado** |
+| VGG16-BN | ~138 M | 0.8403 | _(en curso)_ |
 
-> **FALTA (pendiente/excluido): VGG16-BN.** No se entrenó en ninguna config. Con batch 64 en 8 GB su
-> coste estimado supera las ~45 h por run (≈20× DenseNet-121). Se excluye de la comparación de forma
-> justificada (las otras 4 arquitecturas cubren los paradigmas), pero la comparación es de **4
-> arquitecturas, no 5**. Si se quisiera completar, habría que entrenarlo (probablemente con `--batch-size`
-> reducido, lo que rompería la comparabilidad estricta).
+> **VGG16-BN — nofracture12 HECHO (0.8403), min5pct9 EN CURSO.** Entrenado a **batch 64** (comparable),
+> pero a coste enorme: **817 min (~13,6 h), ≈6× DenseNet-121** por desbordamiento de VRAM en 8 GB (138 M
+> parámetros). Es el peor punto de AUROC y el más caro; su IC sigue solapando con el resto (equivalencia).
+> Cuando termine el de min5pct9, la comparación queda completa con las **5 arquitecturas** en ambas configs.
 
 Ablación de configuración (solo DenseNet-121), AUROC CheXpert-5: full13 0.8451 · nofracture12 0.8497 · min5pct9 0.8256.
 
@@ -343,6 +342,7 @@ Detalle adicional por run (val_auroc_best / F1-macro / PR-AUC-macro / duración)
 - ConvNeXt-Tiny min5pct9: 0.8295 / 0.6022 / 0.7331 / 85 min (ép. 12).
 - Swin-Tiny min5pct9: 0.8321 / 0.5941 / 0.7313 / 235 min (ép. 18).
 - DenseNet-121 full13: 0.8190 / 0.4555 / 0.6035 / (ablación, 13 ép.).
+- VGG16-BN nofracture12: 0.8084 / 0.4867 / 0.5864 / 817 min (ép. 12) — la más cara con diferencia.
 
 Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en `docs/COMPARATIVA_ARQUITECTURAS.md`.
 

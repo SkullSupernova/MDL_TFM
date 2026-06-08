@@ -2,9 +2,9 @@
 
 > Informe de la Fase 6 del plan de comparación. Resume los resultados experimentales con
 > intervalos de confianza bootstrap y deriva las conclusiones para la memoria del TFM.
-> **Estado: COMPLETO** — 9 runs reales de comparación (4 arquitecturas × {nofracture12, min5pct9}
-> + ablación DenseNet-121 en full13); VGG16-BN excluido por coste. Fuentes: `experiments/leaderboard.csv`
-> y `experiments/leaderboard_ci.csv`.
+> **Estado:** `nofracture12` completa con las **5 arquitecturas** (incl. VGG16-BN); `min5pct9` con 4
+> (VGG16-BN en curso) + ablación DenseNet-121 en full13. 10 runs reales agregados. Fuentes:
+> `experiments/leaderboard.csv` y `experiments/leaderboard_ci.csv`.
 
 ---
 
@@ -55,11 +55,12 @@ AUROC, PR-AUC con intervalo de confianza bootstrap 95 % sobre el test silver (16
 | ResNet-50 | 0.8517 [0.824, 0.879] | 0.7978 [0.768, 0.858] | 0.5992 [0.568, 0.705] | **0.5062** | 13 | 138 |
 | DenseNet-121 | 0.8497 [0.821, 0.877] | 0.8229 [0.803, 0.865] | 0.6136 [0.583, 0.724] | 0.4968 | 13 | 131 |
 | Swin-Tiny | 0.8438 [0.815, 0.871] | 0.7924 [0.773, 0.861] | 0.6162 [0.584, 0.725] | 0.5040 | 17 | 186 |
-| VGG16-BN | — (excluido) | — | — | — | — | — |
+| VGG16-BN | 0.8403 [0.812, 0.868] | 0.7830 [0.760, 0.845] | 0.5864 [0.554, 0.689] | 0.4867 | 12 | 817 |
 
-> VGG16-BN se excluye de la comparación: con batch 64 en 8 GB su coste estimado supera las
-> ~45 h por run (≈20× el de DenseNet-121), desproporcionado frente al valor científico añadido,
-> dado que las otras cuatro arquitecturas ya cubren los paradigmas relevantes.
+> VGG16-BN se entrenó a **batch 64** (comparable al resto), pero a un coste muy superior: **817 min
+> (~13,6 h), ≈6× DenseNet-121**, por desbordamiento de VRAM a RAM en 8 GB (138 M parámetros). Es la
+> arquitectura con **el peor punto de AUROC CheXpert-5 y el mayor coste**, aunque su IC sigue solapando
+> con el de las demás (equivalencia estadística).
 
 ---
 
@@ -94,12 +95,12 @@ oficiales están presentes en las tres configuraciones.
 
 ### 5.1. Entre arquitecturas: equivalencia estadística
 
-En la métrica principal (**AUROC CheXpert-5**), los intervalos de confianza de las cuatro
-arquitecturas **se solapan por completo** en ambas configuraciones. En `nofracture12` el rango de
-puntos estimados va de 0.8438 (Swin-Tiny) a 0.8536 (ConvNeXt-Tiny) —una diferencia de 0.0098— muy
-inferior a la anchura de los IC (~±0.027). Por tanto, **ninguna arquitectura es significativamente
-superior** a las demás en las cinco patologías oficiales sobre este test. ConvNeXt-Tiny obtiene el
-punto más alto, pero no de forma estadísticamente distinguible.
+En la métrica principal (**AUROC CheXpert-5**), los intervalos de confianza **se solapan por completo**.
+En `nofracture12` (las **5 arquitecturas**) el rango de puntos estimados va de 0.8403 (VGG16-BN) a 0.8536
+(ConvNeXt-Tiny) —una diferencia de 0.0133— muy inferior a la anchura de los IC (~±0.027). Por tanto,
+**ninguna arquitectura es significativamente superior** a las demás en las cinco patologías oficiales
+sobre este test. ConvNeXt-Tiny obtiene el punto más alto y VGG16-BN el más bajo, pero no de forma
+estadísticamente distinguible. (La comparación de las 5 en `min5pct9` se cerrará al terminar VGG16-BN.)
 
 ### 5.2. Entre configuraciones: efecto significativo en métricas macro
 
@@ -117,8 +118,10 @@ la elección de arquitectura.
 ### 5.3. Coste computacional
 
 DenseNet-121 es la arquitectura más eficiente (menos parámetros y menor duración por run, ~95–130 min)
-con rendimiento estadísticamente equivalente al resto. Swin-Tiny es la más lenta (186–235 min) sin
-ventaja de rendimiento. VGG16-BN es inviable en 8 GB a batch comparable.
+con rendimiento estadísticamente equivalente al resto. Swin-Tiny es lenta (186–235 min) sin ventaja de
+rendimiento. **VGG16-BN es la más cara con diferencia: ~817 min (~13,6 h), ≈6× DenseNet-121**, por
+desbordamiento de VRAM a RAM en 8 GB (138 M parámetros) — y además el peor punto de AUROC. Es el caso
+de manual de "más coste, ningún beneficio".
 
 ---
 
