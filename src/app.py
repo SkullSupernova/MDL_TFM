@@ -115,6 +115,27 @@ def _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, threshold):
     return pd.DataFrame(filas, columns=["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"])
 
 
+def _chart_probabilidades(labels, probs, threshold):
+    """Devuelve el gráfico de barras horizontal de probabilidades por patología (Altair)."""
+    df = pd.DataFrame({
+        "Patología": labels,
+        "Probabilidad": probs,
+        "Detectada": np.asarray(probs) >= threshold,
+    }).sort_values("Probabilidad", ascending=False).reset_index(drop=True)
+    base = alt.Chart(df).encode(
+        x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
+        y=alt.Y("Patología:N", sort="-x", title=None),
+    )
+    barras = base.mark_bar().encode(
+        color=alt.condition(alt.datum.Detectada, alt.value("#28a745"), alt.value("#6c757d")),
+        tooltip=["Patología", alt.Tooltip("Probabilidad:Q", format=".2%")],
+    )
+    etiquetas = base.mark_text(align="left", baseline="middle", dx=3).encode(
+        text=alt.Text("Probabilidad:Q", format=".1%"),
+    )
+    return (barras + etiquetas).properties(height=max(300, 24 * len(labels)))
+
+
 def _discover_models() -> dict[str, dict]:
     """
     Busca checkpoints de producción en models/ y deduce su backbone y class_config.
@@ -376,7 +397,9 @@ def main() -> None:
     probs_b = None
     labels_b = None
     if info_b is not None:
-        _, model_b, _, _, labels_b = _load_model(info_b["path"], info_b["backbone"], info_b["class_config"])
+        _, model_b, target_layers_b, _, labels_b = _load_model(
+            info_b["path"], info_b["backbone"], info_b["class_config"]
+        )
         probs_b = _predict(model_b, tensor, device)
 
     # Imagen original en uint8 [0,255] para reutilizarla en cada panel y en las descargas.
@@ -408,66 +431,38 @@ def main() -> None:
     st.divider()
     st.subheader("Probabilidades por patología")
 
+    # df_sorted del modelo A: se reutiliza en el informe PDF (PASO 8).
     df = pd.DataFrame({
         "Patología": labels,
         "Probabilidad": probs,
         "Detectada": probs >= threshold,
     })
-    # Ordenar de mayor a menor probabilidad para que las patologías más probables
-    # aparezcan primero y sean más fáciles de identificar visualmente.
     df_sorted = df.sort_values("Probabilidad", ascending=False).reset_index(drop=True)
 
-    # Gráfico de barras horizontal con Altair.
-    # Se usa Altair (no matplotlib ni plotly) porque es la librería de gráficos
-    # nativa de Streamlit: no requiere instalación extra y se renderiza en SVG
-    # (vectorial, escalable sin pérdida de calidad).
-    # El color verde indica "detectada" (por encima del umbral) y gris "no detectada".
-    # Codificación común (eje X probabilidad, eje Y patología ordenada) compartida por
-    # las barras y por las etiquetas de porcentaje superpuestas.
-    base = alt.Chart(df_sorted).encode(
-        x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
-        y=alt.Y("Patología:N", sort="-x", title=None),
-    )
-    barras = base.mark_bar().encode(
-        color=alt.condition(
-            alt.datum.Detectada,
-            alt.value("#28a745"),    # verde Bootstrap: patología detectada
-            alt.value("#6c757d"),    # gris Bootstrap: no detectada
-        ),
-        tooltip=["Patología", alt.Tooltip("Probabilidad:Q", format=".2%")],
-    )
-    # Etiqueta con el porcentaje al final de cada barra. El formato ".1%" multiplica por
-    # 100 y añade el símbolo (p. ej. 0.608 -> "60.8%").
-    etiquetas = base.mark_text(align="left", baseline="middle", dx=3).encode(
-        text=alt.Text("Probabilidad:Q", format=".1%"),
-    )
-    chart = (barras + etiquetas).properties(height=400)
-    st.altair_chart(chart, use_container_width=True)
+    if probs_b is None:
+        # Un solo modelo: una gráfica + tabla.
+        st.altair_chart(_chart_probabilidades(labels, probs, threshold), use_container_width=True)
+        with st.expander("Ver tabla de valores"):
+            df_display = df_sorted.copy()
+            df_display["Detectada"] = df_display["Detectada"].map({True: "✓", False: ""})
 
-    # Tabla numérica detallada, colapsada por defecto para no saturar la interfaz.
-    with st.expander("Ver tabla de valores"):
-        df_display = df_sorted.copy()
-        df_display["Detectada"] = df_display["Detectada"].map({True: "✓", False: ""})
+            def _color_row(row: pd.Series) -> list[str]:
+                # Verde si la patología fue detectada; gris claro en caso contrario.
+                color = "#d4edda" if row["Detectada"] == "✓" else "#f8f9fa"
+                return [f"background-color: {color}"] * len(row)
 
-        def _color_row(row: pd.Series) -> list[str]:
-            # Colorear toda la fila en verde si la patología fue detectada,
-            # en gris claro en caso contrario, para facilitar la lectura rápida.
-            color = "#d4edda" if row["Detectada"] == "✓" else "#f8f9fa"
-            return [f"background-color: {color}"] * len(row)
+            st.dataframe(
+                df_display.style.apply(_color_row, axis=1).format({"Probabilidad": "{:.4f}"}),
+                use_container_width=True, hide_index=True,
+            )
+    else:
+        # Comparación: una gráfica por modelo (titulada con su nombre) + gráfica comparativa.
+        st.markdown(f"##### {modelo_label}")
+        st.altair_chart(_chart_probabilidades(labels, probs, threshold), use_container_width=True)
+        st.markdown(f"##### {modelo_label_b}")
+        st.altair_chart(_chart_probabilidades(labels_b, probs_b, threshold), use_container_width=True)
 
-        st.dataframe(
-            df_display.style.apply(_color_row, axis=1).format({"Probabilidad": "{:.4f}"}),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    # ==================================================================
-    # PASO 6b: COMPARACIÓN DE MODELOS (opcional, F8)
-    # ==================================================================
-    if probs_b is not None:
-        st.divider()
-        st.subheader("Comparación de modelos")
-        st.caption(f"**A:** {modelo_label}  ·  **B:** {modelo_label_b}")
+        st.markdown("##### Comparación (patologías comunes)")
         df_cmp = _tabla_comparacion(labels, probs, labels_b, probs_b, threshold)
         if df_cmp.empty:
             st.info("Los dos modelos no comparten patologías comparables.")
@@ -500,49 +495,71 @@ def main() -> None:
                 )
 
     # ==================================================================
-    # PASO 7: EXPLICABILIDAD — original (izq.) + Grad-CAM (der.) por patología
+    # PASO 7: EXPLICABILIDAD — original + Grad-CAM (de cada modelo si se compara)
     # ==================================================================
     st.divider()
     st.subheader("Explicabilidad visual")
-    # Solo se generan mapas Grad-CAM de las patologías por encima del umbral, las más
-    # probables primero y hasta el tope max_panels. Si ninguna lo supera, no hay paneles.
-    # 'panels' se deja definido (posiblemente vacío) porque lo usan el informe PDF y el ZIP.
+    if probs_b is not None:
+        st.caption(f"**A:** {modelo_label}  ·  **B:** {modelo_label_b}")
+    # Se generan mapas Grad-CAM de las patologías por encima del umbral (modelo A), las más
+    # probables primero y hasta max_panels. 'panels' (de A) se usa en el PDF/ZIP. En modo
+    # comparación se genera además el Grad-CAM del modelo B para las patologías que comparte.
     panels = []
     if detected:
         n_show = min(len(detected), max_panels)
         orden = np.argsort(probs)[::-1][:n_show]
         # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
-        # las CNN devuelven None. Se calcula una vez y se reutiliza en cada panel.
-        reshape = get_grad_cam_reshape(info["backbone"])
-        with st.spinner(f"Generando {n_show} mapas Grad-CAM…"):
+        # las CNN devuelven None.
+        reshape_a = get_grad_cam_reshape(info["backbone"])
+        idx_b = {lab: i for i, lab in enumerate(labels_b)} if probs_b is not None else {}
+        reshape_b = get_grad_cam_reshape(info_b["backbone"]) if probs_b is not None else None
+        with st.spinner("Generando mapas Grad-CAM…"):
             for idx in orden:
+                lab = labels[int(idx)]
                 # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
                 mask = _compute_grad_cam(
-                    model, tensor, target_layers, int(idx), device, reshape_transform=reshape
+                    model, tensor, target_layers, int(idx), device, reshape_transform=reshape_a
                 )
                 # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
                 # que más influyeron en la predicción de esa patología.
                 heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+                heat_b = None
+                if probs_b is not None and lab in idx_b:
+                    mask_b = _compute_grad_cam(
+                        model_b, tensor, target_layers_b, idx_b[lab], device, reshape_transform=reshape_b
+                    )
+                    heat_b = show_cam_on_image(img_np, mask_b, use_rgb=True)
                 panels.append({
-                    "label": labels[int(idx)],
+                    "label": lab,
                     "prob": float(probs[int(idx)]),
                     "heatmap": heat,
+                    "heatmap_b": heat_b,
                 })
         ocultas = len(detected) - len(panels)
         nota_tope = f" (se omiten {ocultas} por el tope de paneles)" if ocultas > 0 else ""
         st.caption(
             f"Solo se muestran las {len(panels)} patología(s) cuya probabilidad supera el "
-            f"umbral de {threshold:.2f}{nota_tope}. Ajusta el umbral en la barra lateral "
-            "para ver más o menos. Izquierda: radiografía original. Derecha: mapa de calor "
-            "Grad-CAM. 🔴 rojo = mayor influencia · 🔵 azul = menor influencia."
+            f"umbral de {threshold:.2f}{nota_tope}. Ajusta el umbral en la barra lateral. "
+            "🔴 rojo = mayor influencia · 🔵 azul = menor influencia."
         )
         for p in panels:
-            st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.image(img_resized, use_container_width=True, caption="Original")
-            with col2:
-                st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
+            if probs_b is not None and p["label"] in idx_b:
+                pb = float(probs_b[idx_b[p["label"]]])
+                st.markdown(f"**{p['label']}** — A: {p['prob'] * 100:.1f}% · B: {pb * 100:.1f}%")
+            else:
+                st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
+            if probs_b is None:
+                col1, col2 = st.columns(2)
+                col1.image(img_resized, use_container_width=True, caption="Original")
+                col2.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
+            else:
+                col1, col2, col3 = st.columns(3)
+                col1.image(img_resized, use_container_width=True, caption="Original")
+                col2.image(p["heatmap"], use_container_width=True, caption="Grad-CAM · A")
+                if p["heatmap_b"] is not None:
+                    col3.image(p["heatmap_b"], use_container_width=True, caption="Grad-CAM · B")
+                else:
+                    col3.info("Patología no presente en el modelo B")
     else:
         st.info(
             f"Ninguna patología supera el umbral de {threshold:.2f}, así que no se muestran "

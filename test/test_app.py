@@ -6,6 +6,7 @@ import pytest
 from src.app import (
     _CLASS_CONFIG_ORDER,
     _agrupar_modelos_por_arquitectura,
+    _chart_probabilidades,
     _ordenar_class_configs,
     _tabla_comparacion,
 )
@@ -99,3 +100,9 @@ def test_comparacion_modelos_sin_clases_comunes_devuelve_vacio():
     df = _tabla_comparacion(["A"], np.array([0.5]), ["B"], np.array([0.5]), 0.5)
     assert df.empty
     assert list(df.columns) == ["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"]
+
+
+def test_chart_probabilidades_devuelve_grafico_serializable():
+    chart = _chart_probabilidades(["Edema", "Cardiomegaly"], np.array([0.9, 0.2]), 0.5)
+    # Gráfico Altair componible: debe serializarse a dict (Vega-Lite) sin lanzar.
+    assert chart.to_dict() is not None
