@@ -1,11 +1,13 @@
 """Tests de la lógica de selección de modelo en dos pasos de la web (src/app.py)."""
 
+import numpy as np
 import pytest
 
 from src.app import (
     _CLASS_CONFIG_ORDER,
     _agrupar_modelos_por_arquitectura,
     _ordenar_class_configs,
+    _tabla_comparacion,
 )
 
 
@@ -67,3 +69,33 @@ def test_agrupar_modelos_formato_antiguo_class_config_none():
     modelos = {"densenet121": {"path": "x.pth", "backbone": "densenet121", "class_config": None}}
     por_arq = _agrupar_modelos_por_arquitectura(modelos)
     assert por_arq["densenet121"][None]["path"] == "x.pth"
+
+
+# --------------------------------------------------------------------------------------
+# Comparación de dos modelos (F8)
+# --------------------------------------------------------------------------------------
+def test_comparacion_modelos_solo_patologias_comunes():
+    labels_a = ["Cardiomegaly", "Edema", "Fracture"]
+    probs_a = np.array([0.9, 0.1, 0.4])
+    labels_b = ["Edema", "Cardiomegaly", "Pneumonia"]
+    probs_b = np.array([0.2, 0.8, 0.7])
+    df = _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, 0.5)
+    # Comunes en orden de labels_a: Cardiomegaly, Edema (Fracture/Pneumonia se descartan).
+    assert list(df["Patología"]) == ["Cardiomegaly", "Edema"]
+    card = df[df["Patología"] == "Cardiomegaly"].iloc[0]
+    assert card["Modelo A"] == pytest.approx(0.9)
+    assert card["Modelo B"] == pytest.approx(0.8)
+    assert bool(card["Coinciden"])  # ambos >= 0.5
+
+
+def test_comparacion_modelos_desacuerdo_en_umbral():
+    df = _tabla_comparacion(["Edema"], np.array([0.9]), ["Edema"], np.array([0.1]), 0.5)
+    fila = df.iloc[0]
+    assert not bool(fila["Coinciden"])  # 0.9 detecta, 0.1 no
+    assert fila["delta"] == pytest.approx(0.8)
+
+
+def test_comparacion_modelos_sin_clases_comunes_devuelve_vacio():
+    df = _tabla_comparacion(["A"], np.array([0.5]), ["B"], np.array([0.5]), 0.5)
+    assert df.empty
+    assert list(df.columns) == ["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"]

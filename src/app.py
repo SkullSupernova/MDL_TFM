@@ -90,6 +90,31 @@ def _ordenar_class_configs(configs) -> list:
     )
 
 
+def _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, threshold):
+    """
+    Compara las probabilidades de dos modelos sobre las patologías que ambos predicen.
+
+    Como dos `class_config` distintas tienen distinto conjunto de clases, solo se comparan
+    las patologías **comunes** (en el orden de labels_a). Devuelve un DataFrame con columnas
+    'Patología', 'Modelo A', 'Modelo B', 'delta' (|A−B|) y 'Coinciden' (ambos al mismo lado
+    del umbral). Si no hay clases comunes, el DataFrame está vacío (con esas columnas).
+    """
+    idx_b = {lab: i for i, lab in enumerate(labels_b)}
+    filas = []
+    for i, lab in enumerate(labels_a):
+        if lab not in idx_b:
+            continue
+        pa, pb = float(probs_a[i]), float(probs_b[idx_b[lab]])
+        filas.append({
+            "Patología": lab,
+            "Modelo A": pa,
+            "Modelo B": pb,
+            "delta": abs(pa - pb),
+            "Coinciden": bool((pa >= threshold) == (pb >= threshold)),
+        })
+    return pd.DataFrame(filas, columns=["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"])
+
+
 def _discover_models() -> dict[str, dict]:
     """
     Busca checkpoints de producción en models/ y deduce su backbone y class_config.
@@ -281,6 +306,27 @@ def main() -> None:
     if st.sidebar.button("Limpiar historial", use_container_width=True):
         st.session_state.history = []
 
+    # Comparación opcional con un segundo modelo (B) sobre la misma imagen (F8). Replica el
+    # selector de dos pasos; las claves (key=) evitan colisiones de estado con el modelo A.
+    comparar = st.sidebar.checkbox("Comparar con un segundo modelo")
+    info_b = None
+    modelo_label_b = None
+    if comparar:
+        st.sidebar.caption("Segundo modelo (B)")
+        backbone_b = st.sidebar.selectbox(
+            "Arquitectura (B)", sorted(por_arquitectura),
+            format_func=lambda b: _BACKBONE_LABELS.get(b, b), key="arch_b",
+        )
+        config_b = st.sidebar.selectbox(
+            "Clases entrenadas (B)", _ordenar_class_configs(por_arquitectura[backbone_b]),
+            format_func=lambda c: _CLASS_CONFIG_LABELS.get(c, c or "formato antiguo"), key="cfg_b",
+        )
+        info_b = por_arquitectura[backbone_b][config_b]
+        modelo_label_b = (
+            f"{_BACKBONE_LABELS.get(backbone_b, backbone_b)} · "
+            f"{_CLASS_CONFIG_LABELS.get(config_b, config_b or 'formato antiguo')}"
+        )
+
     # ==================================================================
     # PASO 3: CARGA DE IMAGEN
     # ==================================================================
@@ -323,6 +369,15 @@ def main() -> None:
     # PASO 4: INFERENCIA
     # ==================================================================
     probs = _predict(model, tensor, device)
+
+    # Inferencia del segundo modelo (B) sobre la misma imagen, si la comparación está activa.
+    # Todos los backbones usan la misma transformación de entrada (224x224, normalización
+    # ImageNet), así que el mismo 'tensor' es válido para B.
+    probs_b = None
+    labels_b = None
+    if info_b is not None:
+        _, model_b, _, _, labels_b = _load_model(info_b["path"], info_b["backbone"], info_b["class_config"])
+        probs_b = _predict(model_b, tensor, device)
 
     # Imagen original en uint8 [0,255] para reutilizarla en cada panel y en las descargas.
     original_uint8 = (img_np * 255).astype(np.uint8)
@@ -405,6 +460,44 @@ def main() -> None:
             use_container_width=True,
             hide_index=True,
         )
+
+    # ==================================================================
+    # PASO 6b: COMPARACIÓN DE MODELOS (opcional, F8)
+    # ==================================================================
+    if probs_b is not None:
+        st.divider()
+        st.subheader("Comparación de modelos")
+        st.caption(f"**A:** {modelo_label}  ·  **B:** {modelo_label_b}")
+        df_cmp = _tabla_comparacion(labels, probs, labels_b, probs_b, threshold)
+        if df_cmp.empty:
+            st.info("Los dos modelos no comparten patologías comparables.")
+        else:
+            n_ok = int(df_cmp["Coinciden"].sum())
+            st.caption(
+                f"{n_ok}/{len(df_cmp)} patologías comunes con la misma decisión a umbral "
+                f"{threshold:.2f} · diferencia media |A−B| = {df_cmp['delta'].mean():.3f}"
+            )
+            # Barras agrupadas (yOffset = una barra por modelo en cada patología; Altair 5+).
+            df_long = df_cmp.melt(
+                id_vars="Patología", value_vars=["Modelo A", "Modelo B"],
+                var_name="Modelo", value_name="Probabilidad",
+            )
+            cmp_chart = alt.Chart(df_long).mark_bar().encode(
+                x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
+                y=alt.Y("Patología:N", sort="-x", title=None),
+                yOffset="Modelo:N",
+                color=alt.Color("Modelo:N", title=None, scale=alt.Scale(
+                    domain=["Modelo A", "Modelo B"], range=["#1f77b4", "#ff7f0e"])),
+                tooltip=["Patología", "Modelo", alt.Tooltip("Probabilidad:Q", format=".2%")],
+            ).properties(height=max(220, 26 * len(df_cmp)))
+            st.altair_chart(cmp_chart, use_container_width=True)
+            with st.expander("Ver tabla comparativa"):
+                st.dataframe(
+                    df_cmp.rename(columns={"delta": "|A−B|"}).style.format(
+                        {"Modelo A": "{:.3f}", "Modelo B": "{:.3f}", "|A−B|": "{:.3f}"}
+                    ),
+                    use_container_width=True, hide_index=True,
+                )
 
     # ==================================================================
     # PASO 7: EXPLICABILIDAD — original (izq.) + Grad-CAM (der.) por patología
