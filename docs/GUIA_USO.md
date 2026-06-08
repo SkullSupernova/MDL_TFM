@@ -36,8 +36,9 @@ Arranque: `streamlit run src/app.py` (o mediante Docker; ver README). Se abre en
    del historial.
 
 **Comparar dos modelos (opcional):** activa *Comparar con un segundo modelo* en la barra lateral y elige un
-segundo (arquitectura + clases). Tras cargar la imagen aparece una sección **Comparación de modelos** con una
-gráfica de barras de ambos sobre las patologías comunes y un resumen de cuántas decisiones coinciden al umbral.
+segundo (arquitectura + clases). Con la comparación activa, la sección de probabilidades muestra **tres
+gráficas** (modelo A, modelo B y la comparativa sobre las patologías comunes), y la explicabilidad muestra
+**tres imágenes por patología**: la original y el mapa de calor Grad-CAM de cada modelo.
 
 El tema claro u oscuro se cambia desde el menú de la esquina superior derecha, en Settings, Theme.
 
@@ -52,9 +53,9 @@ El tema claro u oscuro se cambia desde el menú de la esquina superior derecha, 
 - **Probabilidades por patología**: gráfico de barras con el porcentaje de cada clase (verde = detectada,
   gris = no detectada) y tabla detallada. El informe PDF incluye este mismo gráfico con cuadrícula y el valor
   numérico de cada barra. La gráfica aparece **antes** de los mapas Grad-CAM para verla sin bajar hasta el final.
-- **Comparación de modelos** (si está activada): gráfica de barras agrupada con las probabilidades de los dos
-  modelos sobre las patologías que ambos predicen, el número de decisiones coincidentes al umbral y una tabla
-  con la diferencia |A−B| por patología.
+- **Comparación de dos modelos** (si está activada): tres gráficas de barras (modelo A, modelo B y comparativa
+  agrupada sobre las patologías comunes), resumen de decisiones coincidentes al umbral y tabla con la diferencia
+  |A−B|; en la explicabilidad, cada patología muestra el original y el Grad-CAM de ambos modelos.
 
 ---
 
