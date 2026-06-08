@@ -473,18 +473,33 @@ def main() -> None:
                 f"{threshold:.2f} · diferencia media |A−B| = {df_cmp['delta'].mean():.3f}"
             )
             # Barras agrupadas (yOffset = una barra por modelo en cada patología; Altair 5+).
+            # En la leyenda se usa el nombre real de cada modelo (prefijado A/B para distinguirlos
+            # aunque coincidan), y se añade el valor al final de cada barra. La altura por patología
+            # es mayor para que las dos barras no queden demasiado finas.
+            etiqueta_a = f"A · {modelo_label}"
+            etiqueta_b = f"B · {modelo_label_b}"
             df_long = df_cmp.melt(
                 id_vars="Patología", value_vars=["Modelo A", "Modelo B"],
                 var_name="Modelo", value_name="Probabilidad",
             )
-            cmp_chart = alt.Chart(df_long).mark_bar().encode(
-                x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
+            df_long["Modelo"] = df_long["Modelo"].map({"Modelo A": etiqueta_a, "Modelo B": etiqueta_b})
+            base_cmp = alt.Chart(df_long).encode(
+                x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
                 y=alt.Y("Patología:N", sort="-x", title=None),
                 yOffset="Modelo:N",
-                color=alt.Color("Modelo:N", title=None, scale=alt.Scale(
-                    domain=["Modelo A", "Modelo B"], range=["#1f77b4", "#ff7f0e"])),
+            )
+            barras_cmp = base_cmp.mark_bar().encode(
+                color=alt.Color(
+                    "Modelo:N", title="Modelo",
+                    scale=alt.Scale(domain=[etiqueta_a, etiqueta_b], range=["#1f77b4", "#ff7f0e"]),
+                    legend=alt.Legend(orient="top", labelLimit=400),
+                ),
                 tooltip=["Patología", "Modelo", alt.Tooltip("Probabilidad:Q", format=".2%")],
-            ).properties(height=max(220, 26 * len(df_cmp)))
+            )
+            etiquetas_cmp = base_cmp.mark_text(align="left", baseline="middle", dx=3, fontSize=10).encode(
+                text=alt.Text("Probabilidad:Q", format=".0%"),
+            )
+            cmp_chart = (barras_cmp + etiquetas_cmp).properties(height=max(300, 55 * len(df_cmp)))
             st.altair_chart(cmp_chart, use_container_width=True)
             with st.expander("Ver tabla comparativa"):
                 st.dataframe(
