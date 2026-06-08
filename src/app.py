@@ -346,58 +346,9 @@ def main() -> None:
         st.warning(f"Ninguna patología supera el umbral de {threshold:.2f}.")
 
     # ==================================================================
-    # PASO 6: EXPLICABILIDAD — original (izq.) + Grad-CAM (der.) por patología
-    # ==================================================================
-    st.divider()
-    st.subheader("Explicabilidad visual")
-    # Solo se generan mapas Grad-CAM de las patologías por encima del umbral, las más
-    # probables primero y hasta el tope max_panels. Si ninguna lo supera, no hay paneles.
-    # 'panels' se deja definido (posiblemente vacío) porque lo usan el informe PDF y el ZIP.
-    panels = []
-    if detected:
-        n_show = min(len(detected), max_panels)
-        orden = np.argsort(probs)[::-1][:n_show]
-        # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
-        # las CNN devuelven None. Se calcula una vez y se reutiliza en cada panel.
-        reshape = get_grad_cam_reshape(info["backbone"])
-        with st.spinner(f"Generando {n_show} mapas Grad-CAM…"):
-            for idx in orden:
-                # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
-                mask = _compute_grad_cam(
-                    model, tensor, target_layers, int(idx), device, reshape_transform=reshape
-                )
-                # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
-                # que más influyeron en la predicción de esa patología.
-                heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
-                panels.append({
-                    "label": labels[int(idx)],
-                    "prob": float(probs[int(idx)]),
-                    "heatmap": heat,
-                })
-        ocultas = len(detected) - len(panels)
-        nota_tope = f" (se omiten {ocultas} por el tope de paneles)" if ocultas > 0 else ""
-        st.caption(
-            f"Solo se muestran las {len(panels)} patología(s) cuya probabilidad supera el "
-            f"umbral de {threshold:.2f}{nota_tope}. Ajusta el umbral en la barra lateral "
-            "para ver más o menos. Izquierda: radiografía original. Derecha: mapa de calor "
-            "Grad-CAM. 🔴 rojo = mayor influencia · 🔵 azul = menor influencia."
-        )
-        for p in panels:
-            st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.image(img_resized, use_container_width=True, caption="Original")
-            with col2:
-                st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
-    else:
-        st.info(
-            f"Ninguna patología supera el umbral de {threshold:.2f}, así que no se muestran "
-            "mapas Grad-CAM. Baja el umbral en la barra lateral para visualizar las "
-            "patologías más probables."
-        )
-
-    # ==================================================================
-    # PASO 7: PROBABILIDADES POR PATOLOGÍA
+    # PASO 6: PROBABILIDADES POR PATOLOGÍA
+    # (la gráfica va antes de la explicabilidad para que el usuario vea el
+    #  resumen cuantitativo sin tener que bajar hasta el final)
     # ==================================================================
     st.divider()
     st.subheader("Probabilidades por patología")
@@ -453,6 +404,57 @@ def main() -> None:
             df_display.style.apply(_color_row, axis=1).format({"Probabilidad": "{:.4f}"}),
             use_container_width=True,
             hide_index=True,
+        )
+
+    # ==================================================================
+    # PASO 7: EXPLICABILIDAD — original (izq.) + Grad-CAM (der.) por patología
+    # ==================================================================
+    st.divider()
+    st.subheader("Explicabilidad visual")
+    # Solo se generan mapas Grad-CAM de las patologías por encima del umbral, las más
+    # probables primero y hasta el tope max_panels. Si ninguna lo supera, no hay paneles.
+    # 'panels' se deja definido (posiblemente vacío) porque lo usan el informe PDF y el ZIP.
+    panels = []
+    if detected:
+        n_show = min(len(detected), max_panels)
+        orden = np.argsort(probs)[::-1][:n_show]
+        # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
+        # las CNN devuelven None. Se calcula una vez y se reutiliza en cada panel.
+        reshape = get_grad_cam_reshape(info["backbone"])
+        with st.spinner(f"Generando {n_show} mapas Grad-CAM…"):
+            for idx in orden:
+                # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
+                mask = _compute_grad_cam(
+                    model, tensor, target_layers, int(idx), device, reshape_transform=reshape
+                )
+                # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
+                # que más influyeron en la predicción de esa patología.
+                heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+                panels.append({
+                    "label": labels[int(idx)],
+                    "prob": float(probs[int(idx)]),
+                    "heatmap": heat,
+                })
+        ocultas = len(detected) - len(panels)
+        nota_tope = f" (se omiten {ocultas} por el tope de paneles)" if ocultas > 0 else ""
+        st.caption(
+            f"Solo se muestran las {len(panels)} patología(s) cuya probabilidad supera el "
+            f"umbral de {threshold:.2f}{nota_tope}. Ajusta el umbral en la barra lateral "
+            "para ver más o menos. Izquierda: radiografía original. Derecha: mapa de calor "
+            "Grad-CAM. 🔴 rojo = mayor influencia · 🔵 azul = menor influencia."
+        )
+        for p in panels:
+            st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image(img_resized, use_container_width=True, caption="Original")
+            with col2:
+                st.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
+    else:
+        st.info(
+            f"Ninguna patología supera el umbral de {threshold:.2f}, así que no se muestran "
+            "mapas Grad-CAM. Baja el umbral en la barra lateral para visualizar las "
+            "patologías más probables."
         )
 
     # ==================================================================
