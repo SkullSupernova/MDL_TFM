@@ -250,5 +250,61 @@
     },
     "checkpoint_path": "models/mejor_modelo_densenet121_full13.pth",
     "promovido": true
+  },
+  "vgg16_bn_nofracture12": {
+    "timestamp": "2026-06-08T14:44:58",
+    "backbone": "vgg16_bn",
+    "class_config": "nofracture12",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8083836155843264,
+      "f1_macro": 0.4576108951122477,
+      "accuracy": 0.0353718303856808
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.8403253347805817,
+      "auroc_macro_evaluable": 0.78295148812369,
+      "pr_auc_macro_evaluable": 0.5864090500342679,
+      "f1_macro": 0.48667777866124257,
+      "f1_micro": 0.5732899022801303,
+      "accuracy": 0.05325443786982249,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_vgg16_bn_nofracture12.pth",
+    "promovido": true
+  },
+  "vgg16_bn_min5pct9": {
+    "timestamp": "2026-06-09T18:12:07",
+    "backbone": "vgg16_bn",
+    "class_config": "min5pct9",
+    "hiperparametros": {
+      "epochs": 50,
+      "learning_rate": 0.0001,
+      "batch_size": 64,
+      "weight_decay": 0.01,
+      "seed": 42
+    },
+    "val_metrics": {
+      "auroc_macro": 0.8278266979790162,
+      "f1_macro": 0.5929576897360467,
+      "accuracy": 0.1004931506849315
+    },
+    "test_metrics": {
+      "auroc_chexpert5": 0.828721539318653,
+      "auroc_macro_evaluable": 0.8701732478726342,
+      "pr_auc_macro_evaluable": 0.7521332499530194,
+      "f1_macro": 0.5863124947598677,
+      "f1_micro": 0.6411290322580645,
+      "accuracy": 0.08875739644970414,
+      "n_muestras": 169
+    },
+    "checkpoint_path": "models/mejor_modelo_vgg16_bn_min5pct9.pth",
+    "promovido": true
   }
 }
