@@ -562,13 +562,17 @@ def main() -> None:
                 )
                 # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
                 # que más influyeron en la predicción de esa patología.
-                heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+                # heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
+                heatmap_rgb = apply_colormap(mask)
+                heat = overlay_heatmap(original_uint8, heatmap_rgb, alpha=0.4)
                 heat_b = None
                 if probs_b is not None and lab in idx_b:
                     mask_b = _compute_grad_cam(
                         model_b, tensor, target_layers_b, idx_b[lab], device, reshape_transform=reshape_b
                     )
-                    heat_b = show_cam_on_image(img_np, mask_b, use_rgb=True)
+                    # heat_b = show_cam_on_image(img_np, mask_b, use_rgb=True)
+                    heatmap_b_rgb = apply_colormap(mask_b)
+                    heat_b = overlay_heatmap(original_uint8, heatmap_b_rgb, alpha=0.4)
                 panels.append({
                     "label": lab,
                     "prob": float(probs[int(idx)]),
