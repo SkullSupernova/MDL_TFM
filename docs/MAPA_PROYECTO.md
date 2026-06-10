@@ -3,7 +3,7 @@
 > Documento de referencia cruzada. Describe **dónde encontrar cada cosa** del proyecto de código
 > (`d:\ProyectosPython\MDL_TFM`) para poder citarlo desde la redacción del TFM escrito. Todos los
 > datos técnicos de este documento están verificados contra el código fuente, no contra resúmenes.
-> Última verificación: 2026-06-07.
+> Última verificación: 2026-06-11.
 
 ---
 
@@ -18,7 +18,7 @@ ConvNeXt-Tiny, Swin-Tiny, VGG16-BN) × **2 configuraciones de clases** (nofractu
 
 ---
 
-## Para el agente del TFM (handoff)
+## Guía para la redacción de la memoria del TFM
 
 El proyecto está **completo**: entrenamientos, evaluación, resultados, despliegue y documentación. Para redactar
 la memoria **no hace falta re-analizar ni reentrenar nada**; toda la información está localizada:
@@ -28,7 +28,7 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 - **Figuras por modelo** (curvas de aprendizaje, ROC, PR, matrices de confusión, resumen clínico):
   `experiments/<run_id>/plots/` — el mapa modelo→run_id está en §6 ("Recursos gráficos para la memoria").
 - **Números crudos**: `experiments/leaderboard.csv` (+ `leaderboard_ci.csv`) y `logs/test_metrics_*.csv` (por clase).
-- **Metodología/decisiones**: §10–§13 de este documento, `docs/ARQUITECTURA.md` y `.claude/ESTADO_PROYECTO.md`.
+- **Metodología/decisiones**: §10–§13 de este documento y `docs/ARQUITECTURA.md`.
 - **Avisos:** Grad-CAM no se guarda en disco (web/PDF/ZIP); hay carpetas de `experiments/` incompletas que
   **no** están en `leaderboard.csv` (ver §6); VGG16-BN se entrenó pero es la arquitectura más cara (§12).
 
@@ -36,9 +36,8 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 
 ## Guía de navegación: ¿dónde encuentro cada cosa?
 
-> El agente que asiste el TFM se ejecuta **en local y ve todo el árbol del proyecto**, incluidas las
-> carpetas **no versionadas** (gitignored). Esas carpetas no estarían en un clon público, **pero sí
-> están en este disco** y son las fuentes de resultados y estado más ricas.
+> El árbol de trabajo en local incluye **carpetas no versionadas** (gitignored) que no estarían en un clon
+> público, **pero sí están en este disco** y son las fuentes de resultados y estado más ricas.
 
 | Necesito… | Está en… |
 |-----------|----------|
@@ -48,8 +47,7 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 | **Resultados crudos y figuras por run** | `experiments/<run_id>/` (`plots/`, `*_per_class.csv`, `report.md`) *(local)* |
 | Índice de runs + IC bootstrap | `experiments/leaderboard.csv`, `experiments/leaderboard_ci.csv` *(local)* |
 | Métricas por clase del test | `logs/test_metrics_<backbone>_<config>.csv` *(local)* |
-| Estado, decisiones y próximos pasos | `.claude/ESTADO_PROYECTO.md`, `CLAUDE.md` *(local)* |
-| Modelos entrenados | `models/*.pth` *(local)*; registro en `models/best_model_registry.json` |
+| Modelos entrenados | `models/mejor_modelo_densenet121_*.pth` (DenseNet, versionados); resto de backbones **locales**; registro en `models/best_model_registry.json` |
 | Datasets y transformaciones | `chexpert_csv/` (etiquetas); ETL en `src/utils.py`; transforms en `src/main.py` y `src/models.py`; imágenes en `C:/CheXpertDataset/` *(fuera del repo)* |
 | Configuración de entrenamiento | `config/config.yml` |
 | Scripts auxiliares (no son la app) | `src/preprocess_resize.py` (pre-resize), `src/bootstrap_ci.py` (IC bootstrap) |
@@ -78,16 +76,13 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 | `.github/workflows/` | sí | `ci.yml` (tests en CPU) y `docker-publish.yml` (publica imagen en GHCR). |
 | `Dockerfile`, `docker-compose.yml`, `docker-compose.ghcr.yml`, `.dockerignore` | sí | Despliegue. Ver §9. |
 | `requirements.txt`, `requirements-dev.txt`, `pytest.ini` | sí | Dependencias y configuración de pytest. |
-| `models/` | parcial | Solo `best_model_registry.json` está en el repo; los `.pth` son **locales**. Ver §5. |
+| `models/` | parcial | Los tres `mejor_modelo_densenet121_*.pth` y `best_model_registry.json` están en el repo; los `.pth` de los demás backbones son **locales**. Ver §5. |
 | `experiments/` | **local** | Carpeta por run + `leaderboard.csv` + `leaderboard_ci.csv`. Ver §6. |
 | `logs/` | **local** | `app.log`, `experiments.jsonl`, `test_metrics_*.csv`. |
-| `.claude/ESTADO_PROYECTO.md` | **local** | Estado vivo (avances, pendientes, decisiones, plan de comparación). |
-| `CLAUDE.md` | **local** | Instrucciones del repo (contexto, fases, reglas de estilo y commits). |
 | `data/` | **local** | (Reservado; las imágenes reales viven fuera del repo, en `C:/CheXpertDataset/`.) |
 
-> **"local"** = no está en el repositorio público (gitignored), **pero sí en este disco** y accesible para
-> el agente. Las carpetas locales (`experiments/`, `models/`, `logs/`, `.claude/`) son las fuentes de
-> resultados y estado más ricas.
+> **"local"** = no está en el repositorio público (gitignored), **pero sí en este disco**. Las carpetas
+> locales (`experiments/`, `models/`, `logs/`) son las fuentes de resultados y estado más ricas.
 
 ---
 
@@ -417,7 +412,6 @@ Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en 
 **Otros pendientes (no bloqueantes):** revisar `requirements.txt` (mezcla dev/prod; funciona tal cual);
 (opcional) integrar el test/gold oficial de 500 estudios. (`test/test_api.py` y la limpieza de docs ya hechos.)
 
-> Para el detalle vivo de avances/pendientes/decisiones, la fuente es `.claude/ESTADO_PROYECTO.md`.
 > Para el detalle técnico narrativo, `docs/ARQUITECTURA.md`. Para uso, `docs/GUIA_USO.md`.
 
 ---
