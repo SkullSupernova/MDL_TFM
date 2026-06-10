@@ -20,9 +20,15 @@ from sklearn.metrics import (
     roc_auc_score,
     average_precision_score,
 )
-from pytorch_grad_cam import GradCAM
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
-from pytorch_grad_cam.utils.image import show_cam_on_image
+# pytorch_grad_cam es una dependencia OPCIONAL: solo la usa generar_auditoria_total (auditoría
+# Grad-CAM en notebook). Se importa de forma tolerante para que el módulo pueda importarse en
+# instalaciones sin esta librería (despliegue web, CI, reentrenamiento sin OpenCV).
+try:
+    from pytorch_grad_cam import GradCAM
+    from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+    from pytorch_grad_cam.utils.image import show_cam_on_image
+except ImportError:
+    GradCAM = ClassifierOutputTarget = show_cam_on_image = None
 from IPython.display import display, Markdown
 
 from src.logging_config import get_logger
@@ -381,6 +387,13 @@ def generar_auditoria_total(
         Dispositivo de cómputo.
     """
     model.eval()
+
+    if GradCAM is None:
+        logger.warning(
+            "pytorch_grad_cam no está instalado; se omite la auditoría Grad-CAM. "
+            "Instálalo (pip install grad-cam) si necesitas estos gráficos."
+        )
+        return
 
     # model.features[-1] es la última capa convolucional del DenseNet-121.
     # GradCAM necesita los gradientes que fluyen hacia esta capa para calcular
