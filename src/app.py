@@ -27,10 +27,12 @@ import streamlit as st
 import torch
 import yaml
 from PIL import Image
-from pytorch_grad_cam import GradCAM
-from pytorch_grad_cam.utils.image import show_cam_on_image
-from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+# from pytorch_grad_cam import GradCAM
+# from pytorch_grad_cam.utils.image import show_cam_on_image
+# from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from torchvision import transforms
+
+from src.grad_cam import compute_grad_cam, apply_colormap, overlay_heatmap
 
 from src.models import (
     get_active_pathology_cols,
@@ -230,6 +232,26 @@ def _predict(model: torch.nn.Module, tensor: torch.Tensor, device: torch.device)
         return torch.sigmoid(logits).squeeze(0).cpu().numpy()
 
 
+# def _compute_grad_cam(
+#     model: torch.nn.Module,
+#     tensor: torch.Tensor,
+#     target_layers: list,
+#     class_idx: int,
+#     device: torch.device,
+#     reshape_transform=None,
+# ) -> np.ndarray:
+#     # GradCAM calcula la importancia de cada región de la imagen midiendo cómo
+#     # cambian los gradientes de la clase objetivo en la capa convolucional elegida.
+#     # Para ello necesita que el grafo de gradientes esté activo: NO se puede usar
+#     # dentro de 'with torch.inference_mode()' ni 'with torch.no_grad()'.
+#     # La librería pytorch_grad_cam gestiona internamente el contexto de gradientes.
+#     # reshape_transform es necesario para transformers (Swin): convierte las
+#     # activaciones de tokens (B, H, W, C) al formato convolucional (B, C, H, W).
+#     cam = GradCAM(model=model, target_layers=target_layers, reshape_transform=reshape_transform)
+#     targets = [ClassifierOutputTarget(class_idx)]
+#     mask = cam(input_tensor=tensor.to(device), targets=targets)
+#     return mask[0]  # (H, W) float32 en [0, 1]; 0=no relevante, 1=muy relevante
+
 def _compute_grad_cam(
     model: torch.nn.Module,
     tensor: torch.Tensor,
@@ -238,18 +260,16 @@ def _compute_grad_cam(
     device: torch.device,
     reshape_transform=None,
 ) -> np.ndarray:
-    # GradCAM calcula la importancia de cada región de la imagen midiendo cómo
-    # cambian los gradientes de la clase objetivo en la capa convolucional elegida.
-    # Para ello necesita que el grafo de gradientes esté activo: NO se puede usar
-    # dentro de 'with torch.inference_mode()' ni 'with torch.no_grad()'.
-    # La librería pytorch_grad_cam gestiona internamente el contexto de gradientes.
-    # reshape_transform es necesario para transformers (Swin): convierte las
-    # activaciones de tokens (B, H, W, C) al formato convolucional (B, C, H, W).
-    cam = GradCAM(model=model, target_layers=target_layers, reshape_transform=reshape_transform)
-    targets = [ClassifierOutputTarget(class_idx)]
-    mask = cam(input_tensor=tensor.to(device), targets=targets)
-    return mask[0]  # (H, W) float32 en [0, 1]; 0=no relevante, 1=muy relevante
-
+    """Calcula Grad-CAM usando implementación propia."""
+    target_layer = target_layers[0]  # Usar la primera capa
+    cam = compute_grad_cam(
+        model=model,
+        input_tensor=tensor,
+        target_layer=target_layer,
+        target_class=class_idx,
+        reshape_transform=reshape_transform,
+    )
+    return cam  # Retorna (H, W) normalizado [0, 1]
 
 def main() -> None:
     st.set_page_config(page_title="CheXpert Classifier", page_icon="🫁", layout="wide")

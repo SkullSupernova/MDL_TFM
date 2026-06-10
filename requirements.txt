@@ -19,7 +19,7 @@ fonttools==4.63.0
 fsspec==2026.4.0
 gitdb==4.0.12
 GitPython==3.1.50
-grad-cam==1.5.5
+# grad-cam==1.5.5
 h11==0.16.0
 idna==3.16
 iniconfig==2.3.0
