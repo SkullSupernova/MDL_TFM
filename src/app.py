@@ -123,8 +123,10 @@ def _chart_probabilidades(labels, probs, threshold):
         "Detectada": np.asarray(probs) >= threshold,
     }).sort_values("Probabilidad", ascending=False).reset_index(drop=True)
     base = alt.Chart(df).encode(
-        x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1]), title="Probabilidad"),
-        y=alt.Y("Patología:N", sort="-x", title=None),
+        # Margen x hasta 1.08 para que la etiqueta de valor de las barras largas no se recorte.
+        x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
+        y=alt.Y("Patología:N", sort="-x", title=None,
+                axis=alt.Axis(labelLimit=320, labelFontSize=12)),
     )
     barras = base.mark_bar().encode(
         color=alt.condition(alt.datum.Detectada, alt.value("#28a745"), alt.value("#6c757d")),
@@ -133,7 +135,9 @@ def _chart_probabilidades(labels, probs, threshold):
     etiquetas = base.mark_text(align="left", baseline="middle", dx=3).encode(
         text=alt.Text("Probabilidad:Q", format=".1%"),
     )
-    return (barras + etiquetas).properties(height=max(300, 24 * len(labels)))
+    # Altura por clase generosa (34 px) para que las etiquetas del eje Y se lean sin solaparse,
+    # también con muchas clases o en contenedores estrechos.
+    return (barras + etiquetas).properties(height=max(340, 34 * len(labels)))
 
 
 def _discover_models() -> dict[str, dict]:
@@ -485,7 +489,8 @@ def main() -> None:
             df_long["Modelo"] = df_long["Modelo"].map({"Modelo A": etiqueta_a, "Modelo B": etiqueta_b})
             base_cmp = alt.Chart(df_long).encode(
                 x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
-                y=alt.Y("Patología:N", sort="-x", title=None),
+                y=alt.Y("Patología:N", sort="-x", title=None,
+                        axis=alt.Axis(labelLimit=320, labelFontSize=12)),
                 yOffset="Modelo:N",
             )
             barras_cmp = base_cmp.mark_bar().encode(
@@ -499,7 +504,7 @@ def main() -> None:
             etiquetas_cmp = base_cmp.mark_text(align="left", baseline="middle", dx=3, fontSize=10).encode(
                 text=alt.Text("Probabilidad:Q", format=".0%"),
             )
-            cmp_chart = (barras_cmp + etiquetas_cmp).properties(height=max(300, 55 * len(df_cmp)))
+            cmp_chart = (barras_cmp + etiquetas_cmp).properties(height=max(360, 64 * len(df_cmp)))
             st.altair_chart(cmp_chart, use_container_width=True)
             with st.expander("Ver tabla comparativa"):
                 st.dataframe(
