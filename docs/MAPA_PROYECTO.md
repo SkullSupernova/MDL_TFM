@@ -180,9 +180,9 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 
 `test_models.py`, `test_utils.py`, `test_train.py`, `test_evaluate.py`, `test_registry.py`,
 `test_experiment_tracker.py`, `test_image_utils.py`, `test_report.py`, `test_preprocess_resize.py`,
-`test_bootstrap_ci.py`, `test_app.py`. `conftest.py` (fixtures compartidas). Ejecutar:
+`test_bootstrap_ci.py`, `test_app.py`, `test_api.py`. `conftest.py` (fixtures compartidas). Ejecutar:
 `.venv\Scripts\pytest.exe test/ -v`. No dependen del dataset real (datos sintéticos / `tmp_path`).
-Estado actual: **145 passed**.
+Estado actual: **153 passed**.
 
 ---
 
@@ -410,8 +410,8 @@ Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en 
 - **Web:** comparación de dos modelos (3 gráficas + Grad-CAM de ambos), gráfica antes de los mapas, barras
   legibles en tamaño reducido, e **informe PDF con comparación completa de dos modelos**.
 
-**Otros pendientes (no bloqueantes):** `test/test_api.py`; revisar `requirements.txt` (mezcla dev/prod);
-(opcional) integrar el test/gold oficial de 500 estudios. (`docs/arquitectura_propuesta.txt` ya no existe.)
+**Otros pendientes (no bloqueantes):** revisar `requirements.txt` (mezcla dev/prod; funciona tal cual);
+(opcional) integrar el test/gold oficial de 500 estudios. (`test/test_api.py` y la limpieza de docs ya hechos.)
 
 > Para el detalle vivo de avances/pendientes/decisiones, la fuente es `.claude/ESTADO_PROYECTO.md`.
 > Para el detalle técnico narrativo, `docs/ARQUITECTURA.md`. Para uso, `docs/GUIA_USO.md`.
