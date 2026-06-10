@@ -12,8 +12,25 @@
 Clasificación **multietiqueta** de 13 patologías torácicas a partir de radiografías de tórax del dataset
 **CheXpert** (Stanford), con explicabilidad **Grad-CAM**, evaluación sobre un test *silver-standard*, un gate
 de promoción automático del mejor modelo, sistema de seguimiento de experimentos, **API REST** (FastAPI) e
-**interfaz web** (Streamlit). Incluye una comparación de **5 arquitecturas soportadas** (4 entrenadas;
-VGG16-BN excluido por coste) × **3 configuraciones de clases** (13 / 12 / 9).
+**interfaz web** (Streamlit). Incluye una comparación de **5 arquitecturas** (DenseNet-121, ResNet-50,
+ConvNeXt-Tiny, Swin-Tiny, VGG16-BN) × **2 configuraciones de clases** (nofracture12 = 12, min5pct9 = 9) +
+**ablación** de DenseNet-121 en full13 (13). **Todos los entrenamientos están terminados** (11 runs).
+
+---
+
+## Para el agente del TFM (handoff)
+
+El proyecto está **completo**: entrenamientos, evaluación, resultados, despliegue y documentación. Para redactar
+la memoria **no hace falta re-analizar ni reentrenar nada**; toda la información está localizada:
+
+- **Empieza por este documento** (`docs/MAPA_PROYECTO.md`) y la tabla "¿dónde encuentro cada cosa?" de abajo.
+- **Resultados ya sintetizados** (tablas + IC bootstrap + conclusiones): `docs/COMPARATIVA_ARQUITECTURAS.md`.
+- **Figuras por modelo** (curvas de aprendizaje, ROC, PR, matrices de confusión, resumen clínico):
+  `experiments/<run_id>/plots/` — el mapa modelo→run_id está en §6 ("Recursos gráficos para la memoria").
+- **Números crudos**: `experiments/leaderboard.csv` (+ `leaderboard_ci.csv`) y `logs/test_metrics_*.csv` (por clase).
+- **Metodología/decisiones**: §10–§13 de este documento, `docs/ARQUITECTURA.md` y `.claude/ESTADO_PROYECTO.md`.
+- **Avisos:** Grad-CAM no se guarda en disco (web/PDF/ZIP); hay carpetas de `experiments/` incompletas que
+  **no** están en `leaderboard.csv` (ver §6); VGG16-BN se entrenó pero es la arquitectura más cara (§12).
 
 ---
 
@@ -39,10 +56,10 @@ VGG16-BN excluido por coste) × **3 configuraciones de clases** (13 / 12 / 9).
 | Despliegue (Docker / GHCR) | `Dockerfile`, `docker-compose.yml`, `docker-compose.ghcr.yml`, `.github/workflows/docker-publish.yml`, `README.md` §2 |
 | Recursos del TFM (notebooks, ejemplos) | `notebook/`, `muestras_busqueda/`, `docs/` |
 
-> **Aviso sobre `experiments/`:** no todas las carpetas son runs completos. Hay **2 incompletas**
-> (`…_vgg16_bn_nofracture12`, abandonado; `…-150200_densenet121_full13`, interrumpido y reanudado en
-> `…-193649`) y un smoke test (`…_calibracion`, 1 época). **`leaderboard.csv` es el índice
-> autoritativo** de los 9 runs de comparación completos y promovidos.
+> **Aviso sobre `experiments/`:** no todas las carpetas son runs completos. Hay **varias incompletas**
+> (intentos de VGG16-BN abandonados, y full13 / VGG-min5pct9 interrumpidos y reanudados) más un smoke test
+> (`…_calibracion`). La lista exacta y el mapa modelo→run_id están en §6. **`leaderboard.csv` es el índice
+> autoritativo** de los **11 runs** de comparación completos y promovidos.
 
 ---
 
@@ -165,7 +182,7 @@ VGG16-BN excluido por coste) × **3 configuraciones de clases** (13 / 12 / 9).
 `test_experiment_tracker.py`, `test_image_utils.py`, `test_report.py`, `test_preprocess_resize.py`,
 `test_bootstrap_ci.py`, `test_app.py`. `conftest.py` (fixtures compartidas). Ejecutar:
 `.venv\Scripts\pytest.exe test/ -v`. No dependen del dataset real (datos sintéticos / `tmp_path`).
-Estado actual: **139 passed**.
+Estado actual: **145 passed**.
 
 ---
 
@@ -210,9 +227,34 @@ report.md                                informe legible por run (incluye clases
 - `leaderboard_ci.csv` — generado por `src/bootstrap_ci.py`: añade intervalos de confianza bootstrap 95 %
   (AUROC CheXpert-5, AUROC-macro, PR-AUC-macro) por run.
 
-**Carpetas incompletas:** algunas carpetas `<run_id>/` corresponden a runs no terminados y **no aparecen en
-`leaderboard.csv`**: `…_vgg16_bn_nofracture12` (abandonado), `…-150200_densenet121_full13` (interrumpido;
-reanudado en `…-193649`) y `…_calibracion` (smoke test de 1 época). Usar `leaderboard.csv` como referencia.
+**Carpetas incompletas a ignorar** (no están en `leaderboard.csv`): `20260606-131802_vgg16_bn_nofracture12` y
+`20260608-010632_vgg16_bn_nofracture12` (intentos VGG abandonados), `20260607-150200_densenet121_full13`
+(interrumpido; el válido es `…-193649`), `20260608-144527_vgg16_bn_min5pct9` (interrumpido; el válido es
+`…-085441`) y `…_calibracion` (smoke de 1 época). **`leaderboard.csv` es el índice autoritativo.**
+
+### Recursos gráficos para la memoria (run_id de cada modelo)
+
+Cada run **completo** guarda en `experiments/<run_id>/plots/` los **6 PNG**: `learning_curves.png`,
+`confusion_matrices_val.png`, `confusion_matrices_test.png`, `roc_curves_test.png`, `pr_curves_test.png`,
+`clinical_summary_test.png`. Mapa (modelo → carpeta) para localizarlos:
+
+| Modelo (backbone · config) | Carpeta `experiments/<run_id>/` |
+|---|---|
+| densenet121 · nofracture12 | `20260606-012127_densenet121_nofracture12` |
+| convnext_tiny · nofracture12 | `20260606-103937_convnext_tiny_nofracture12` |
+| resnet50 · nofracture12 | `20260606-203341_resnet50_nofracture12` |
+| swin_t · nofracture12 | `20260607-033447_swin_t_nofracture12` |
+| vgg16_bn · nofracture12 | `20260608-010814_vgg16_bn_nofracture12` |
+| densenet121 · min5pct9 | `20260607-064029_densenet121_min5pct9` |
+| resnet50 · min5pct9 | `20260607-081639_resnet50_min5pct9` |
+| convnext_tiny · min5pct9 | `20260607-094133_convnext_tiny_min5pct9` |
+| swin_t · min5pct9 | `20260607-110648_swin_t_min5pct9` |
+| vgg16_bn · min5pct9 | `20260609-085441_vgg16_bn_min5pct9` |
+| densenet121 · full13 (ablación) | `20260607-193649_densenet121_full13` |
+
+> **Grad-CAM:** NO se persiste durante el entrenamiento (no hay PNG de Grad-CAM en `experiments/`). Es
+> interactivo en la web; se obtiene descargando el ZIP (`empaquetar_imagenes_zip`) o embebido en el informe PDF.
+> Para figuras de explicabilidad en la memoria, generarlas desde la web (`streamlit run src/app.py`).
 
 ---
 
@@ -313,7 +355,7 @@ pre-resize; incertidumbre por **bootstrap sobre el test** (no entre semillas).
 
 ---
 
-## 12. Resultados experimentales (al 2026-06-07)
+## 12. Resultados experimentales (completos, al 2026-06-10)
 
 Comparación de arquitecturas — **AUROC CheXpert-5 sobre el test silver** (169 img). 1 semilla (42), batch 64.
 
@@ -323,12 +365,12 @@ Comparación de arquitecturas — **AUROC CheXpert-5 sobre el test silver** (169
 | ResNet-50 | ~25 M | 0.8517 | 0.8422 |
 | DenseNet-121 | ~7 M | 0.8497 | 0.8256 |
 | Swin-Tiny | ~28 M | 0.8438 | 0.8404 |
-| VGG16-BN | ~138 M | 0.8403 | _(en curso)_ |
+| VGG16-BN | ~138 M | 0.8403 | 0.8287 |
 
-> **VGG16-BN — nofracture12 HECHO (0.8403), min5pct9 EN CURSO.** Entrenado a **batch 64** (comparable),
-> pero a coste enorme: **817 min (~13,6 h), ≈6× DenseNet-121** por desbordamiento de VRAM en 8 GB (138 M
-> parámetros). Es el peor punto de AUROC y el más caro; su IC sigue solapando con el resto (equivalencia).
-> Cuando termine el de min5pct9, la comparación queda completa con las **5 arquitecturas** en ambas configs.
+> **VGG16-BN — entrenado en ambas configs** (batch 64, comparable), pero a coste enorme: **817 min
+> (nofracture12) y 557 min (min5pct9), ~6–9× DenseNet-121** por desbordamiento de VRAM en 8 GB (138 M
+> parámetros). Es el **peor punto de AUROC CheXpert-5 en ambas** y, con diferencia, el más caro; su IC sigue
+> solapando con el resto (equivalencia). La comparación de las **5 arquitecturas** está completa en ambas configs.
 
 Ablación de configuración (solo DenseNet-121), AUROC CheXpert-5: full13 0.8451 · nofracture12 0.8497 · min5pct9 0.8256.
 
@@ -343,6 +385,7 @@ Detalle adicional por run (val_auroc_best / F1-macro / PR-AUC-macro / duración)
 - Swin-Tiny min5pct9: 0.8321 / 0.5941 / 0.7313 / 235 min (ép. 18).
 - DenseNet-121 full13: 0.8190 / 0.4555 / 0.6035 / (ablación, 13 ép.).
 - VGG16-BN nofracture12: 0.8084 / 0.4867 / 0.5864 / 817 min (ép. 12) — la más cara con diferencia.
+- VGG16-BN min5pct9: 0.8278 / 0.5863 / 0.7521 / 557 min (ép. 12) — mejor PR-AUC-macro, peor AUROC-5, la más cara.
 
 Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en `docs/COMPARATIVA_ARQUITECTURAS.md`.
 
@@ -358,17 +401,17 @@ Intervalos de confianza bootstrap 95 % en `experiments/leaderboard_ci.csv` y en 
 ## 13. Estado del proyecto y trabajo pendiente
 
 - **Fases 1–9 (implementación) + Fase 3 (pipeline de comparación):** completas.
-- **Fase 4 (entrenamientos):** ✅ completa — 4 arquitecturas × {nofracture12, min5pct9} + ablación
-  DenseNet-121 en full13. **Falta VGG16-BN** (NO entrenado; excluido por coste, ver §12).
-- **Fase 5 (IC bootstrap):** ✅ completa — `src/bootstrap_ci.py` + tests; `experiments/leaderboard_ci.csv`.
-- **Fase 6 (informe comparativo):** ✅ completa — `docs/COMPARATIVA_ARQUITECTURAS.md`.
-- **Fase 7 (despliegue):** ✅ completa — Docker local verificado (build + `up` + `/health` + `/predict` con
-  modelo real), workflow GHCR funcionando (ejecutado con éxito; imagen publicada), README con Opciones A/B y
-  `docker-compose.ghcr.yml`. **Pendiente opcional:** `git push` automático ya publica; el paquete GHCR es privado.
+- **Fase 4 (entrenamientos):** ✅ **completa** — las **5 arquitecturas** × {nofracture12, min5pct9} +
+  ablación DenseNet-121 en full13. **11 runs** de comparación (VGG16-BN incluido, ambas configs).
+- **Fase 5 (IC bootstrap):** ✅ completa — `src/bootstrap_ci.py` + tests; `experiments/leaderboard_ci.csv` (11 runs).
+- **Fase 6 (informe comparativo):** ✅ completa — `docs/COMPARATIVA_ARQUITECTURAS.md` (5 arquitecturas, ambas configs).
+- **Fase 7 (despliegue):** ✅ completa — Docker local verificado (build + `up` + `/health` + `/predict`),
+  workflow GHCR funcionando (imagen publicada y probada con pull), README con Opciones A/B y `docker-compose.ghcr.yml`.
+- **Web:** comparación de dos modelos (3 gráficas + Grad-CAM de ambos), gráfica antes de los mapas, barras
+  legibles en tamaño reducido, e **informe PDF con comparación completa de dos modelos**.
 
-**Otros pendientes (no bloqueantes):** entrenar VGG16-BN si se desea cerrar las 5 arquitecturas;
-`test/test_api.py`; limpiar `docs/arquitectura_propuesta.txt` y revisar `requirements.txt`;
-(opcional) integrar el test/gold oficial de 500 estudios.
+**Otros pendientes (no bloqueantes):** `test/test_api.py`; revisar `requirements.txt` (mezcla dev/prod);
+(opcional) integrar el test/gold oficial de 500 estudios. (`docs/arquitectura_propuesta.txt` ya no existe.)
 
 > Para el detalle vivo de avances/pendientes/decisiones, la fuente es `.claude/ESTADO_PROYECTO.md`.
 > Para el detalle técnico narrativo, `docs/ARQUITECTURA.md`. Para uso, `docs/GUIA_USO.md`.

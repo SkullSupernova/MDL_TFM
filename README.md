@@ -253,4 +253,4 @@ No requieren el dataset real (usan datos sintéticos):
 .venv/bin/pytest test/ -v                # Mac/Linux
 ```
 
-Resultado esperado: **139 passed**.
+Resultado esperado: **145 passed**.
