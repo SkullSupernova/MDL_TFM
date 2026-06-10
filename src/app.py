@@ -613,6 +613,22 @@ def main() -> None:
         "panels": panels,
         "metricas_modelo": _collect_model_metrics(info["backbone"], info["class_config"]),
     }
+    # En modo comparación, el informe incluye ambos modelos. 'panels' ya contiene el Grad-CAM
+    # del modelo B (heatmap_b) generado en el PASO 7, así que no hay que recalcular nada.
+    if probs_b is not None:
+        filas_b = sorted(
+            [{"patologia": lab, "probabilidad": float(probs_b[i]),
+              "detectada": bool(probs_b[i] >= threshold)} for i, lab in enumerate(labels_b)],
+            key=lambda d: d["probabilidad"], reverse=True,
+        )
+        contexto.update({
+            "comparacion": True,
+            "modelo_b": info_b["backbone"],
+            "class_config_b": info_b["class_config"],
+            "checkpoint_b": info_b["path"],
+            "filas_b": filas_b,
+            "metricas_modelo_b": _collect_model_metrics(info_b["backbone"], info_b["class_config"]),
+        })
     col_pdf, col_zip = st.columns(2)
     with col_pdf:
         st.download_button(

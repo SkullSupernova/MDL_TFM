@@ -87,3 +87,44 @@ def test_build_report_pdf_falta_clave_obligatoria_lanza_valueerror(clave):
     del ctx[clave]
     with pytest.raises(ValueError, match=clave):
         build_report_pdf(ctx)
+
+
+# =========================================================
+# build_report_pdf — comparación de dos modelos
+# =========================================================
+
+def _contexto_comparacion(n_panels=4):
+    """Contexto en modo comparación: modelo B con 4 clases comunes + 1 propia."""
+    ctx = _contexto(n_panels=n_panels, n_clases=6)
+    labels_b = [f"Patologia {i}" for i in range(4)] + ["Patologia X"]
+    probs_b = np.linspace(0.8, 0.2, len(labels_b))
+    ctx["filas_b"] = [
+        {"patologia": lab, "probabilidad": float(p), "detectada": bool(p >= 0.5)}
+        for lab, p in zip(labels_b, probs_b)
+    ]
+    comunes_b = set(labels_b)
+    for p in ctx["panels"]:
+        # Grad-CAM de B solo en las clases que B predice; None en las que no.
+        p["heatmap_b"] = (np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
+                          if p["label"] in comunes_b else None)
+    ctx.update({
+        "comparacion": True,
+        "modelo_b": "convnext_tiny",
+        "class_config_b": "min5pct9",
+        "metricas_modelo_b": {"auroc_chexpert5": 0.85, "f1_macro": 0.60, "accuracy": 0.70},
+    })
+    return ctx
+
+
+def test_build_report_pdf_comparacion_dos_modelos():
+    pdf = build_report_pdf(_contexto_comparacion(n_panels=4))
+    assert pdf[:4] == b"%PDF"
+    assert len(pdf) > 2000
+
+
+def test_build_report_pdf_comparacion_clase_solo_en_a_no_rompe():
+    # Con 6 paneles y solo 4 clases comunes, hay paneles con heatmap_b None.
+    ctx = _contexto_comparacion(n_panels=6)
+    assert any(p["heatmap_b"] is None for p in ctx["panels"])
+    pdf = build_report_pdf(ctx)
+    assert pdf[:4] == b"%PDF"
