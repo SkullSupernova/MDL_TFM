@@ -240,11 +240,13 @@ negativo (0), incierto (-1) y no mencionado (en blanco).
 
 ---
 
-## 15. Despliegue (Docker y GHCR)
+## 15. Despliegue (Docker, GHCR y Streamlit Cloud)
 
-La imagen Docker (`python:3.12-slim`, PyTorch CPU) empaqueta `src/` y `config/`. El `.dockerignore` excluye
-`models/`, por lo que **el checkpoint no va dentro de la imagen**: se monta como volumen, igual que `config/`
-(lo que permite cambiar el modelo servido sin reconstruir). Dos formas de ejecutar:
+La imagen Docker (`python:3.12-slim`, PyTorch CPU) empaqueta `src/` y `config/`. No instala librerías de
+sistema: Grad-CAM es una implementación propia (`src/grad_cam.py`, NumPy + Matplotlib) y ninguna dependencia
+usa OpenCV. El `.dockerignore` excluye `models/`, por lo que **el checkpoint no va dentro de la imagen**: se
+monta como volumen, igual que `config/` (lo que permite cambiar el modelo servido sin reconstruir). Dos formas
+de ejecutar:
 
 - **Opción A — construir en local:** `docker compose build && docker compose up`. Servicios `api` (uvicorn,
   puerto 8000) y `webapp` (Streamlit, 8501), ambos montan `models/`, `config/` y `logs/`.
@@ -255,3 +257,8 @@ La imagen Docker (`python:3.12-slim`, PyTorch CPU) empaqueta `src/` y `config/`.
 construye y publica la imagen en GitHub Container Registry en push a `main`, tags `v*` o manualmente
 (`workflow_dispatch`). El modelo servido por defecto es `models/mejor_modelo_densenet121_full13.pth`.
 Guía de uso paso a paso (login, pull) en [../README.md](../README.md) §2.
+
+**Streamlit Community Cloud:** la interfaz web está publicada en https://mdltfm-mvb.streamlit.app/ y redespliega
+en cada push a `main`. A diferencia de Docker, en este despliegue los tres modelos DenseNet-121 **se versionan**
+en el repositorio (~31 MB cada uno, bajo el límite de 100 MB de GitHub); no requiere `packages.txt` ni
+dependencias de sistema.

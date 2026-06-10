@@ -40,7 +40,8 @@ segundo (arquitectura + clases). Con la comparación activa, la sección de prob
 gráficas** (modelo A, modelo B y la comparativa sobre las patologías comunes), y la explicabilidad muestra
 **tres imágenes por patología**: la original y el mapa de calor Grad-CAM de cada modelo. El **informe PDF**
 descargado en este modo incluye ambos modelos: probabilidades de A y de B, la gráfica comparativa y el
-Grad-CAM de los dos por patología.
+Grad-CAM de los dos por patología. El **ZIP** de imágenes también exporta los mapas de los dos modelos, con
+sufijo `_A` y `_B` en el nombre de cada fichero.
 
 El tema claro u oscuro se cambia desde el menú de la esquina superior derecha, en Settings, Theme.
 

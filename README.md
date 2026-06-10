@@ -4,6 +4,8 @@ Sistema de apoyo al cribado que analiza radiografías de tórax y estima la prob
 (edema, cardiomegalia, derrame pleural, neumonía, entre otras), con explicabilidad visual mediante **Grad-CAM**
 e informe en PDF.
 
+**Demo en línea:** [mdltfm-mvb.streamlit.app](https://mdltfm-mvb.streamlit.app/) (Streamlit Community Cloud; sirve los modelos DenseNet-121).
+
 Aviso: herramienta de demostración y de investigación (Trabajo de Fin de Máster). No es un producto médico y
 no sustituye el diagnóstico de un profesional sanitario.
 
@@ -93,6 +95,19 @@ docker compose -f docker-compose.ghcr.yml up
 > entrenamiento). El modelo servido se elige en `config/config.yml` (`model.checkpoint_path`),
 > también montado como volumen, de modo que puedes cambiarlo sin reconstruir la imagen.
 
+### Despliegue público en Streamlit Community Cloud
+
+La interfaz web está publicada en [mdltfm-mvb.streamlit.app](https://mdltfm-mvb.streamlit.app/). A diferencia
+del despliegue con Docker, aquí los modelos **sí viajan en el repositorio**: solo se versionan los tres
+DenseNet-121 (`models/mejor_modelo_densenet121_*.pth`, ~31 MB cada uno, por debajo del límite de 100 MB de
+GitHub). La plataforma reconstruye y redespliega automáticamente en cada `git push` a `main`. Configuración:
+
+- **Main file path:** `src/app.py`; **branch:** `main`.
+- `requirements.txt` instala `torch`/`torchvision` en versión CPU gracias a la primera línea
+  (`--extra-index-url https://download.pytorch.org/whl/cpu`).
+- No requiere `packages.txt` ni librerías de sistema: Grad-CAM usa una implementación propia basada en NumPy y
+  Matplotlib (`src/grad_cam.py`), sin OpenCV.
+
 ---
 
 ## 3. Instalación manual
@@ -129,7 +144,8 @@ uvicorn src.api:app --reload        # API REST
    - **Explicabilidad**: para las patologías detectadas (mínimo 5), la radiografía original junto a su mapa
      de calor Grad-CAM (las zonas cálidas indican mayor influencia en la predicción).
    - **Gráfico de probabilidades** por patología (con su porcentaje) y tabla detallada.
-   - **Descargas**: informe PDF, archivo ZIP con las imágenes (original y mapas de calor) y CSV del historial.
+   - **Descargas**: informe PDF, archivo ZIP con las imágenes (original y mapas de calor; en modo comparación
+     incluye los de ambos modelos, sufijo `_A`/`_B`) y CSV del historial.
 5. Tema claro u oscuro desde el menú de la esquina superior derecha, en Settings, Theme.
 
 Guía detallada: **[docs/GUIA_USO.md](docs/GUIA_USO.md)**.

@@ -314,6 +314,10 @@ columnas pero no elimina imágenes.
 - **`.github/workflows/docker-publish.yml`** — construye y **publica la imagen en GHCR** en push a `main`,
   tags `v*` o manualmente (`workflow_dispatch`). El `.dockerignore` excluye `models/`, así que el modelo no va
   en la imagen (se monta como volumen).
+- **Streamlit Community Cloud** — la web está publicada en https://mdltfm-mvb.streamlit.app/. Redespliega
+  automáticamente en cada push a `main`. A diferencia de Docker, aquí los modelos **se versionan** en el repo
+  (solo los tres DenseNet-121, ~31 MB c/u). No necesita `packages.txt` ni librerías de sistema: Grad-CAM es una
+  implementación propia (`src/grad_cam.py`, NumPy + Matplotlib), sin OpenCV; `requirements.txt` instala torch CPU.
 - **Arranque local sin Docker:** `streamlit run src/app.py` (web), `uvicorn src.api:app --reload` (API).
 - **CI:** `.github/workflows/ci.yml` ejecuta la suite pytest en CPU (no despliega).
 - **Limitación documentada:** `api.py` asume checkpoint de 13/14 clases (usa `get_pathology_labels`); para
