@@ -102,16 +102,25 @@ def empaquetar_imagenes_zip(original: np.ndarray, panels: List[Dict]) -> bytes:
     original : np.ndarray uint8 (H, W, 3)
         Radiografía original (224×224).
     panels : list[dict]
-        Cada panel con "label" (str) y "heatmap" (np.ndarray uint8, H, W, 3).
+        Cada panel con "label" (str), "heatmap" (np.ndarray uint8, H, W, 3) y, en modo
+        comparación, "heatmap_b" (np.ndarray uint8 o None) con el mapa del segundo modelo.
 
     Devuelve
     --------
-    bytes del ZIP. Contiene `original.png` y un `heatmap_<i>_<label>.png` por panel
-    (total de ficheros = 1 + len(panels)).
+    bytes del ZIP. Contiene `original.png` y, por panel, su mapa de calor. Si el panel lleva
+    un `heatmap_b` no nulo (modo comparación) se exportan ambos modelos como
+    `heatmap_<i>_<label>_A.png` y `heatmap_<i>_<label>_B.png`; en caso contrario un único
+    `heatmap_<i>_<label>.png`.
     """
     buf = BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("original.png", _png_bytes(original))
         for i, p in enumerate(panels, start=1):
-            zf.writestr(f"heatmap_{i:02d}_{_slug(p['label'])}.png", _png_bytes(p["heatmap"]))
+            label = _slug(p["label"])
+            heatmap_b = p.get("heatmap_b")
+            if heatmap_b is not None:
+                zf.writestr(f"heatmap_{i:02d}_{label}_A.png", _png_bytes(p["heatmap"]))
+                zf.writestr(f"heatmap_{i:02d}_{label}_B.png", _png_bytes(heatmap_b))
+            else:
+                zf.writestr(f"heatmap_{i:02d}_{label}.png", _png_bytes(p["heatmap"]))
     return buf.getvalue()

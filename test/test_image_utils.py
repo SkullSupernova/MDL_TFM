@@ -84,3 +84,30 @@ def test_empaquetar_zip_nombre_de_fichero_saneado():
     with zipfile.ZipFile(BytesIO(empaquetar_imagenes_zip(original, panels))) as zf:
         heatmaps = [n for n in zf.namelist() if n.startswith("heatmap_")]
     assert heatmaps == ["heatmap_01_Pleural_Effusion_Other.png"]
+
+
+def test_empaquetar_zip_comparacion_incluye_ambos_modelos():
+    original = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+    panels = [{
+        "label": "Cardiomegaly",
+        "heatmap": original.copy(),
+        "heatmap_b": original.copy(),
+    }]
+    with zipfile.ZipFile(BytesIO(empaquetar_imagenes_zip(original, panels))) as zf:
+        heatmaps = sorted(n for n in zf.namelist() if n.startswith("heatmap_"))
+    assert heatmaps == ["heatmap_01_Cardiomegaly_A.png", "heatmap_01_Cardiomegaly_B.png"]
+
+
+def test_empaquetar_zip_comparacion_panel_sin_modelo_b_exporta_solo_a():
+    original = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+    panels = [
+        {"label": "Edema", "heatmap": original.copy(), "heatmap_b": original.copy()},
+        {"label": "Fracture", "heatmap": original.copy(), "heatmap_b": None},
+    ]
+    with zipfile.ZipFile(BytesIO(empaquetar_imagenes_zip(original, panels))) as zf:
+        heatmaps = sorted(n for n in zf.namelist() if n.startswith("heatmap_"))
+    assert heatmaps == [
+        "heatmap_01_Edema_A.png",
+        "heatmap_01_Edema_B.png",
+        "heatmap_02_Fracture.png",
+    ]
