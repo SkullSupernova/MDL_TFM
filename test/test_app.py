@@ -79,18 +79,26 @@ def test_agrupar_modelos_formato_antiguo_class_config_none():
 # --------------------------------------------------------------------------------------
 # Comparación de dos modelos (F8)
 # --------------------------------------------------------------------------------------
-def test_comparacion_modelos_solo_patologias_comunes():
+def test_comparacion_modelos_incluye_todas_las_clases():
     labels_a = ["Cardiomegaly", "Edema", "Fracture"]
     probs_a = np.array([0.9, 0.1, 0.4])
     labels_b = ["Edema", "Cardiomegaly", "Pneumonia"]
     probs_b = np.array([0.2, 0.8, 0.7])
     df = _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, 0.5)
-    # Comunes en orden de labels_a: Cardiomegaly, Edema (Fracture/Pneumonia se descartan).
-    assert list(df["Patología"]) == ["Cardiomegaly", "Edema"]
+    # Unión: primero las de A en su orden, luego las exclusivas de B (Pneumonia).
+    assert list(df["Patología"]) == ["Cardiomegaly", "Edema", "Fracture", "Pneumonia"]
     card = df[df["Patología"] == "Cardiomegaly"].iloc[0]
     assert card["Modelo A"] == pytest.approx(0.9)
     assert card["Modelo B"] == pytest.approx(0.8)
     assert bool(card["Coinciden"])  # ambos >= 0.5
+    # Clases presentes en un solo modelo: el otro queda NaN y 'Coinciden' es False.
+    frac = df[df["Patología"] == "Fracture"].iloc[0]
+    assert frac["Modelo A"] == pytest.approx(0.4)
+    assert np.isnan(frac["Modelo B"])
+    assert not bool(frac["Coinciden"])
+    pneu = df[df["Patología"] == "Pneumonia"].iloc[0]
+    assert np.isnan(pneu["Modelo A"])
+    assert pneu["Modelo B"] == pytest.approx(0.7)
 
 
 def test_comparacion_modelos_desacuerdo_en_umbral():
@@ -100,10 +108,12 @@ def test_comparacion_modelos_desacuerdo_en_umbral():
     assert fila["delta"] == pytest.approx(0.8)
 
 
-def test_comparacion_modelos_sin_clases_comunes_devuelve_vacio():
+def test_comparacion_modelos_sin_clases_comunes_incluye_ambas():
     df = _tabla_comparacion(["A"], np.array([0.5]), ["B"], np.array([0.5]), 0.5)
-    assert df.empty
-    assert list(df.columns) == ["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"]
+    assert list(df["Patología"]) == ["A", "B"]
+    assert np.isnan(df.iloc[0]["Modelo B"])  # 'A' no existe en el modelo B
+    assert np.isnan(df.iloc[1]["Modelo A"])  # 'B' no existe en el modelo A
+    assert not df["Coinciden"].any()
 
 
 def test_chart_probabilidades_devuelve_grafico_serializable():

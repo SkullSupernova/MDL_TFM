@@ -94,26 +94,28 @@ def _ordenar_class_configs(configs) -> list:
 
 def _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, threshold):
     """
-    Compara las probabilidades de dos modelos sobre las patologías que ambos predicen.
+    Compara las probabilidades de dos modelos sobre **todas** las patologías (unión).
 
-    Como dos `class_config` distintas tienen distinto conjunto de clases, solo se comparan
-    las patologías **comunes** (en el orden de labels_a). Devuelve un DataFrame con columnas
-    'Patología', 'Modelo A', 'Modelo B', 'delta' (|A−B|) y 'Coinciden' (True cuando **ambos**
-    modelos superan el umbral, es decir detectan la patología). Si no hay clases comunes, el
-    DataFrame está vacío (con esas columnas).
+    Como dos `class_config` distintas tienen distinto conjunto de clases, se incluyen todas:
+    primero las del modelo A (en su orden) y después las exclusivas de B. La probabilidad de un
+    modelo que no tiene esa clase queda como NaN (celda vacía). Devuelve un DataFrame con columnas
+    'Patología', 'Modelo A', 'Modelo B', 'delta' (|A−B|, NaN si falta en un modelo) y 'Coinciden'
+    (True solo si **ambos** modelos tienen la clase y la detectan, prob >= umbral).
     """
-    idx_b = {lab: i for i, lab in enumerate(labels_b)}
+    map_a = {lab: float(probs_a[i]) for i, lab in enumerate(labels_a)}
+    map_b = {lab: float(probs_b[i]) for i, lab in enumerate(labels_b)}
+    orden = list(labels_a) + [lab for lab in labels_b if lab not in map_a]
     filas = []
-    for i, lab in enumerate(labels_a):
-        if lab not in idx_b:
-            continue
-        pa, pb = float(probs_a[i]), float(probs_b[idx_b[lab]])
+    for lab in orden:
+        pa = map_a.get(lab)
+        pb = map_b.get(lab)
+        ambos = pa is not None and pb is not None
         filas.append({
             "Patología": lab,
-            "Modelo A": pa,
-            "Modelo B": pb,
-            "delta": abs(pa - pb),
-            "Coinciden": bool(pa >= threshold and pb >= threshold),
+            "Modelo A": pa if pa is not None else np.nan,
+            "Modelo B": pb if pb is not None else np.nan,
+            "delta": abs(pa - pb) if ambos else np.nan,
+            "Coinciden": bool(ambos and pa >= threshold and pb >= threshold),
         })
     return pd.DataFrame(filas, columns=["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"])
 
@@ -152,6 +154,8 @@ def _chart_comparacion(df_cmp, modelo_label, modelo_label_b):
         var_name="Modelo", value_name="Probabilidad",
     )
     df_long["Modelo"] = df_long["Modelo"].map({"Modelo A": etiqueta_a, "Modelo B": etiqueta_b})
+    # Sin barra donde el modelo no tiene la clase (probabilidad NaN).
+    df_long = df_long.dropna(subset=["Probabilidad"])
     base_cmp = alt.Chart(df_long).encode(
         x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
         y=alt.Y("Patología:N", sort="-x", title=None,
@@ -190,15 +194,22 @@ def _estilo_tabla_probabilidades(df_sorted):
 def _estilo_tabla_comparacion(df_cmp, threshold):
     """Styler de la tabla comparativa: cada modelo en verde/rojo según supere el umbral."""
     tabla = df_cmp.rename(columns={"delta": "|A−B|", "Coinciden": "Ambos detectan"}).copy()
+    # Donde un modelo no tiene la clase, 'ambos detectan' no aplica: se marca "—" (no ✓/✗).
+    falta = tabla["Modelo A"].isna() | tabla["Modelo B"].isna()
     tabla["Ambos detectan"] = tabla["Ambos detectan"].map({True: "✓ Sí", False: "✗ No"})
+    tabla.loc[falta, "Ambos detectan"] = "—"
 
     def _coincide(val: str) -> str:
-        if isinstance(val, str) and val.startswith("✓"):
+        if val == "✓ Sí":
             return "background-color: #d4edda; color: #155724; font-weight: 600"
-        return "background-color: #f8d7da; color: #721c24"
+        if val == "✗ No":
+            return "background-color: #f8d7da; color: #721c24"
+        return ""  # "—": clase ausente en un modelo, sin color
 
     def _umbral(val) -> str:
-        # Verde si el modelo detecta la patología (prob >= umbral), rojo si no.
+        # Vacío (clase ausente en ese modelo): sin color. Verde si detecta, rojo si no.
+        if pd.isna(val):
+            return ""
         if val >= threshold:
             return "background-color: #d4edda; color: #155724"
         return "background-color: #f8d7da; color: #721c24"
@@ -207,7 +218,7 @@ def _estilo_tabla_comparacion(df_cmp, threshold):
         tabla.style
         .map(_coincide, subset=["Ambos detectan"])
         .map(_umbral, subset=["Modelo A", "Modelo B"])
-        .format({"Modelo A": "{:.1%}", "Modelo B": "{:.1%}", "|A−B|": "{:.3f}"})
+        .format({"Modelo A": "{:.1%}", "Modelo B": "{:.1%}", "|A−B|": "{:.3f}"}, na_rep="")
     )
 
 
@@ -609,11 +620,13 @@ def main() -> None:
                 _estilo_tabla_probabilidades(df_sorted), use_container_width=True, hide_index=True,
             )
         else:
+            n_comunes = int((df_cmp["Modelo A"].notna() & df_cmp["Modelo B"].notna()).sum())
             n_ok = int(df_cmp["Coinciden"].sum())
+            delta_txt = f"{df_cmp['delta'].mean():.3f}" if n_comunes else "—"
             st.caption(
-                f"{n_ok}/{len(df_cmp)} patologías comunes detectadas por **ambos** modelos "
-                f"(probabilidad ≥ umbral {threshold:.2f}) · diferencia media |A−B| = "
-                f"{df_cmp['delta'].mean():.3f}"
+                f"{len(df_cmp)} patologías en total · {n_comunes} comunes a ambos modelos · "
+                f"{n_ok} detectadas por **ambos** (probabilidad ≥ umbral {threshold:.2f}) · "
+                f"diferencia media |A−B| sobre las comunes = {delta_txt}"
             )
             st.altair_chart(
                 _chart_comparacion(df_cmp, modelo_label, modelo_label_b),
