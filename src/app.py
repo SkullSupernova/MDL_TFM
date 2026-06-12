@@ -780,12 +780,14 @@ def main() -> None:
             "filas_b": filas_b,
             "metricas_modelo_b": _collect_model_metrics(info_b["backbone"], info_b["class_config"]),
         })
+    # Nombre de fichero profesional y único: prefijo descriptivo + sello temporal.
+    sello = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
     col_pdf, col_zip = st.columns(2)
     with col_pdf:
         st.download_button(
             label="Descargar informe (PDF)",
             data=build_report_pdf(contexto),
-            file_name=f"informe_{Path(uploaded.name).stem}.pdf",
+            file_name=f"Informe_radiologico_torax_{sello}.pdf",
             mime="application/pdf",
             use_container_width=True,
         )
@@ -793,7 +795,7 @@ def main() -> None:
         st.download_button(
             label="Descargar imágenes (ZIP)",
             data=empaquetar_imagenes_zip(original_uint8, panels),
-            file_name=f"imagenes_{Path(uploaded.name).stem}.zip",
+            file_name=f"GradCAM_torax_{sello}.zip",
             mime="application/zip",
             use_container_width=True,
         )
