@@ -455,31 +455,9 @@ def main() -> None:
         "Umbral de clasificación", min_value=0.0, max_value=1.0,
         value=default_threshold, step=0.01,
     )
-    # Tope de paneles Grad-CAM: solo se generan mapas de las patologías por encima del
-    # umbral (prob ≥ umbral); este valor limita cuántas se muestran, por coste de CPU
-    # (cada panel es una pasada de Grad-CAM). El máximo es el nº de clases del modelo.
-    # Al cambiar a un modelo con menos clases, el valor guardado en session_state podría
-    # superar el nuevo máximo y Streamlit lanzaría un error: se reajusta antes de crear el
-    # widget. El nº real de paneles se acota además a las patologías detectadas (PASO 7).
-    if "max_panels" not in st.session_state:
-        st.session_state["max_panels"] = min(8, len(labels))
-    elif st.session_state["max_panels"] > len(labels):
-        st.session_state["max_panels"] = len(labels)
-    max_panels = st.sidebar.slider(
-        "Máximo de mapas Grad-CAM",
-        min_value=1, max_value=len(labels), step=1, key="max_panels",
-        help=(
-            "Límite superior de mapas Grad-CAM a generar. Solo se muestran las patologías "
-            "cuya probabilidad supera el umbral, las más probables primero; si hay menos "
-            "patologías detectadas que este límite, se muestran solo las detectadas."
-        ),
-    )
-
-    if st.sidebar.button("Limpiar historial", use_container_width=True):
-        st.session_state.history = []
-
-    # Comparación opcional con un segundo modelo (B) sobre la misma imagen (F8). Replica el
-    # selector de dos pasos; las claves (key=) evitan colisiones de estado con el modelo A.
+    # Comparación opcional con un segundo modelo (B) sobre la misma imagen. Se elige antes del
+    # tope de mapas para que su máximo cubra también las clases de B. Replica el selector de dos
+    # pasos; las claves (key=) evitan colisiones de estado con el modelo A.
     comparar = st.sidebar.checkbox("Comparar con un segundo modelo")
     info_b = None
     modelo_label_b = None
@@ -498,6 +476,34 @@ def main() -> None:
             f"{_BACKBONE_LABELS.get(backbone_b, backbone_b)} · "
             f"{_CLASS_CONFIG_LABELS.get(config_b, config_b or 'formato antiguo')}"
         )
+
+    # Tope de mapas Grad-CAM: limita cuántos se generan, por coste de CPU (cada mapa es una
+    # pasada de Grad-CAM). El máximo es el nº de patologías posibles = la UNIÓN de las clases
+    # del modelo A y, si se compara, las del B (que puede tener más). Al reducirse ese máximo,
+    # el valor guardado en session_state podría superarlo y Streamlit lanzaría un error: se
+    # reajusta antes de crear el widget. El nº real de mapas se acota además a las detectadas.
+    etiquetas_posibles = list(labels)
+    if info_b is not None and info_b["class_config"]:
+        for lab in get_active_pathology_cols(info_b["class_config"]):
+            if lab not in etiquetas_posibles:
+                etiquetas_posibles.append(lab)
+    max_posible = len(etiquetas_posibles)
+    if "max_panels" not in st.session_state:
+        st.session_state["max_panels"] = min(8, max_posible)
+    elif st.session_state["max_panels"] > max_posible:
+        st.session_state["max_panels"] = max_posible
+    max_panels = st.sidebar.slider(
+        "Máximo de mapas Grad-CAM",
+        min_value=1, max_value=max_posible, step=1, key="max_panels",
+        help=(
+            "Límite superior de mapas Grad-CAM a generar (sobre la unión de clases de ambos "
+            "modelos). Solo se muestran las patologías detectadas (probabilidad ≥ umbral), las "
+            "más probables primero; si hay menos detectadas que este límite, se muestran solo esas."
+        ),
+    )
+
+    if st.sidebar.button("Limpiar historial", use_container_width=True):
+        st.session_state.history = []
 
     # ==================================================================
     # PASO 3: CARGA DE IMAGEN
