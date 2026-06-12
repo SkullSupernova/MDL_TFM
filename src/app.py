@@ -98,8 +98,9 @@ def _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, threshold):
 
     Como dos `class_config` distintas tienen distinto conjunto de clases, solo se comparan
     las patologías **comunes** (en el orden de labels_a). Devuelve un DataFrame con columnas
-    'Patología', 'Modelo A', 'Modelo B', 'delta' (|A−B|) y 'Coinciden' (ambos al mismo lado
-    del umbral). Si no hay clases comunes, el DataFrame está vacío (con esas columnas).
+    'Patología', 'Modelo A', 'Modelo B', 'delta' (|A−B|) y 'Coinciden' (True cuando **ambos**
+    modelos superan el umbral, es decir detectan la patología). Si no hay clases comunes, el
+    DataFrame está vacío (con esas columnas).
     """
     idx_b = {lab: i for i, lab in enumerate(labels_b)}
     filas = []
@@ -112,7 +113,7 @@ def _tabla_comparacion(labels_a, probs_a, labels_b, probs_b, threshold):
             "Modelo A": pa,
             "Modelo B": pb,
             "delta": abs(pa - pb),
-            "Coinciden": bool((pa >= threshold) == (pb >= threshold)),
+            "Coinciden": bool(pa >= threshold and pb >= threshold),
         })
     return pd.DataFrame(filas, columns=["Patología", "Modelo A", "Modelo B", "delta", "Coinciden"])
 
@@ -188,8 +189,8 @@ def _estilo_tabla_probabilidades(df_sorted):
 
 def _estilo_tabla_comparacion(df_cmp):
     """Styler de la tabla comparativa: columna 'Coinciden' en verde (sí) o rojo (no)."""
-    tabla = df_cmp.rename(columns={"delta": "|A−B|"}).copy()
-    tabla["Coinciden"] = tabla["Coinciden"].map({True: "✓ Sí", False: "✗ No"})
+    tabla = df_cmp.rename(columns={"delta": "|A−B|", "Coinciden": "Ambos detectan"}).copy()
+    tabla["Ambos detectan"] = tabla["Ambos detectan"].map({True: "✓ Sí", False: "✗ No"})
 
     def _coincide(val: str) -> str:
         if isinstance(val, str) and val.startswith("✓"):
@@ -198,7 +199,7 @@ def _estilo_tabla_comparacion(df_cmp):
 
     return (
         tabla.style
-        .map(_coincide, subset=["Coinciden"])
+        .map(_coincide, subset=["Ambos detectan"])
         .format({"Modelo A": "{:.1%}", "Modelo B": "{:.1%}", "|A−B|": "{:.3f}"})
     )
 
@@ -603,8 +604,9 @@ def main() -> None:
         else:
             n_ok = int(df_cmp["Coinciden"].sum())
             st.caption(
-                f"{n_ok}/{len(df_cmp)} patologías comunes con la misma decisión a umbral "
-                f"{threshold:.2f} · diferencia media |A−B| = {df_cmp['delta'].mean():.3f}"
+                f"{n_ok}/{len(df_cmp)} patologías comunes detectadas por **ambos** modelos "
+                f"(probabilidad ≥ umbral {threshold:.2f}) · diferencia media |A−B| = "
+                f"{df_cmp['delta'].mean():.3f}"
             )
             st.altair_chart(
                 _chart_comparacion(df_cmp, modelo_label, modelo_label_b),

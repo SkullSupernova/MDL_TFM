@@ -37,6 +37,12 @@ def compute_grad_cam(
     def forward_hook(module, inputs, output):
         nonlocal activations
         activations = output.detach()
+        # Solo registrar el hook de gradiente si el tensor lo admite. Bajo inference_mode/no_grad
+        # (inferencia normal) el tensor no requiere gradiente; si un hook quedara registrado de una
+        # llamada previa sobre el modelo cacheado, register_hook lanzaría RuntimeError. Este guard
+        # hace la inferencia robusta aunque el hook no se hubiera retirado.
+        if not output.requires_grad:
+            return output
         # Se captura el gradiente con un hook de TENSOR (no de módulo): así se evita
         # register_full_backward_hook, que falla cuando la capa objetivo va seguida de una
         # operación in-place (p. ej. F.relu(features, inplace=True) en DenseNet).
