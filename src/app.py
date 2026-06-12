@@ -128,18 +128,79 @@ def _chart_probabilidades(labels, probs, threshold):
         # Margen x hasta 1.08 para que la etiqueta de valor de las barras largas no se recorte.
         x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
         y=alt.Y("Patología:N", sort="-x", title=None,
-                axis=alt.Axis(labelLimit=320, labelFontSize=12)),
+                axis=alt.Axis(labelLimit=320, labelFontSize=13)),
     )
-    barras = base.mark_bar().encode(
+    barras = base.mark_bar(size=22).encode(
         color=alt.condition(alt.datum.Detectada, alt.value("#28a745"), alt.value("#6c757d")),
         tooltip=["Patología", alt.Tooltip("Probabilidad:Q", format=".2%")],
     )
-    etiquetas = base.mark_text(align="left", baseline="middle", dx=3).encode(
+    etiquetas = base.mark_text(align="left", baseline="middle", dx=4, fontSize=14, fontWeight="bold").encode(
         text=alt.Text("Probabilidad:Q", format=".1%"),
     )
-    # Altura por clase generosa (34 px) para que las etiquetas del eje Y se lean sin solaparse,
-    # también con muchas clases o en contenedores estrechos.
-    return (barras + etiquetas).properties(height=max(340, 34 * len(labels)))
+    # 44 px por clase (barra de 22 px + separación) para que ni las etiquetas del eje Y ni las
+    # barras se solapen, también con muchas clases o en contenedores estrechos.
+    return (barras + etiquetas).properties(height=max(360, 44 * len(labels)))
+
+
+def _chart_comparacion(df_cmp, modelo_label, modelo_label_b):
+    """Gráfica de barras agrupadas (modelo A vs B) sobre las patologías comunes (Altair)."""
+    etiqueta_a = f"A · {modelo_label}"
+    etiqueta_b = f"B · {modelo_label_b}"
+    df_long = df_cmp.melt(
+        id_vars="Patología", value_vars=["Modelo A", "Modelo B"],
+        var_name="Modelo", value_name="Probabilidad",
+    )
+    df_long["Modelo"] = df_long["Modelo"].map({"Modelo A": etiqueta_a, "Modelo B": etiqueta_b})
+    base_cmp = alt.Chart(df_long).encode(
+        x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
+        y=alt.Y("Patología:N", sort="-x", title=None,
+                axis=alt.Axis(labelLimit=320, labelFontSize=13)),
+        yOffset="Modelo:N",
+    )
+    barras_cmp = base_cmp.mark_bar(size=18).encode(
+        color=alt.Color(
+            "Modelo:N", title="Modelo",
+            scale=alt.Scale(domain=[etiqueta_a, etiqueta_b], range=["#1f77b4", "#ff7f0e"]),
+            legend=alt.Legend(orient="top", labelLimit=400),
+        ),
+        tooltip=["Patología", "Modelo", alt.Tooltip("Probabilidad:Q", format=".2%")],
+    )
+    etiquetas_cmp = base_cmp.mark_text(
+        align="left", baseline="middle", dx=4, fontSize=12, fontWeight="bold",
+    ).encode(text=alt.Text("Probabilidad:Q", format=".0%"))
+    # 76 px por patología: dos sub-barras de 18 px más separación y etiquetas sin solape.
+    return (barras_cmp + etiquetas_cmp).properties(height=max(380, 76 * len(df_cmp)))
+
+
+def _estilo_tabla_probabilidades(df_sorted):
+    """Styler de la tabla de probabilidades: filas detectadas resaltadas en verde."""
+    tabla = df_sorted.copy()
+    tabla["Estado"] = tabla["Detectada"].map({True: "✓ Detectada", False: "—"})
+    tabla = tabla[["Patología", "Probabilidad", "Estado"]]
+
+    def _fila(row: pd.Series) -> list[str]:
+        if row["Estado"].startswith("✓"):
+            return ["background-color: #d4edda; color: #155724; font-weight: 600"] * len(row)
+        return [""] * len(row)
+
+    return tabla.style.apply(_fila, axis=1).format({"Probabilidad": "{:.1%}"})
+
+
+def _estilo_tabla_comparacion(df_cmp):
+    """Styler de la tabla comparativa: columna 'Coinciden' en verde (sí) o rojo (no)."""
+    tabla = df_cmp.rename(columns={"delta": "|A−B|"}).copy()
+    tabla["Coinciden"] = tabla["Coinciden"].map({True: "✓ Sí", False: "✗ No"})
+
+    def _coincide(val: str) -> str:
+        if isinstance(val, str) and val.startswith("✓"):
+            return "background-color: #d4edda; color: #155724; font-weight: 600"
+        return "background-color: #f8d7da; color: #721c24"
+
+    return (
+        tabla.style
+        .map(_coincide, subset=["Coinciden"])
+        .format({"Modelo A": "{:.1%}", "Modelo B": "{:.1%}", "|A−B|": "{:.3f}"})
+    )
 
 
 def _discover_models() -> dict[str, dict]:
@@ -209,6 +270,18 @@ def _load_model(checkpoint_path: str, backbone: str, class_config: Optional[str]
     return cfg, model, target_layers, device, labels
 
 
+# Métricas de test (clave en el registro -> etiqueta legible) que se muestran en la web,
+# mismas que el informe PDF.
+_METRICAS_WEB = [
+    ("auroc_chexpert5", "AUROC CheXpert-5"),
+    ("auroc_macro_evaluable", "AUROC-macro"),
+    ("pr_auc_macro_evaluable", "PR-AUC-macro"),
+    ("f1_macro", "F1-macro"),
+    ("f1_micro", "F1-micro"),
+    ("accuracy", "Exactitud"),
+]
+
+
 def _collect_model_metrics(backbone: str, class_config: Optional[str]) -> Optional[dict]:
     """
     Devuelve las métricas de test del campeón registrado para este modelo, o None.
@@ -220,6 +293,35 @@ def _collect_model_metrics(backbone: str, class_config: Optional[str]) -> Option
     clave = f"{backbone}_{class_config}" if class_config else backbone
     registro = cargar_registro(clave)
     return registro.get("test_metrics") if registro else None
+
+
+def _render_model_card(titulo: str, backbone: str, class_config: Optional[str],
+                       n_labels: int, checkpoint_path: str) -> None:
+    """Muestra las características de un modelo: arquitectura, clases, hiperparámetros y métricas."""
+    clave = f"{backbone}_{class_config}" if class_config else backbone
+    registro = cargar_registro(clave)
+    nombre = _BACKBONE_LABELS.get(backbone, backbone)
+    cfg_lbl = _CLASS_CONFIG_LABELS.get(class_config, class_config or "formato antiguo")
+    st.markdown(f"##### {titulo}: {nombre} · {cfg_lbl}")
+    st.caption(f"{n_labels} patologías · checkpoint `{Path(checkpoint_path).name}`")
+    if not registro:
+        st.info("Sin métricas registradas para este modelo.")
+        return
+    hp = registro.get("hiperparametros", {})
+    if hp:
+        st.caption(
+            f"Entrenamiento: hasta {hp.get('epochs', '—')} épocas · learning rate "
+            f"{hp.get('learning_rate', '—')} · batch {hp.get('batch_size', '—')} · weight decay "
+            f"{hp.get('weight_decay', '—')} · seed {hp.get('seed', '—')}"
+        )
+    tm = registro.get("test_metrics", {})
+    if tm:
+        filas = [{"Métrica": etiqueta, "Valor": f"{tm[k]:.4f}"}
+                 for k, etiqueta in _METRICAS_WEB if k in tm]
+        n_muestras = tm.get("n_muestras")
+        sufijo = f" ({n_muestras} muestras)" if n_muestras else ""
+        st.caption(f"Fiabilidad en el conjunto de test *silver-standard*{sufijo}:")
+        st.dataframe(pd.DataFrame(filas), use_container_width=True, hide_index=True)
 
 
 def _predict(model: torch.nn.Module, tensor: torch.Tensor, device: torch.device) -> np.ndarray:
@@ -336,15 +438,21 @@ def main() -> None:
     )
     # Tope de paneles Grad-CAM: solo se generan mapas de las patologías por encima del
     # umbral (prob ≥ umbral); este valor limita cuántas se muestran, por coste de CPU
-    # (cada panel es una pasada de Grad-CAM).
+    # (cada panel es una pasada de Grad-CAM). El máximo es el nº de clases del modelo.
+    # Al cambiar a un modelo con menos clases, el valor guardado en session_state podría
+    # superar el nuevo máximo y Streamlit lanzaría un error: se reajusta antes de crear el
+    # widget. El nº real de paneles se acota además a las patologías detectadas (PASO 7).
+    if "max_panels" not in st.session_state:
+        st.session_state["max_panels"] = min(8, len(labels))
+    elif st.session_state["max_panels"] > len(labels):
+        st.session_state["max_panels"] = len(labels)
     max_panels = st.sidebar.slider(
-        "Máximo de paneles (Grad-CAM)",
-        min_value=1, max_value=len(labels),
-        value=min(8, len(labels)), step=1,
+        "Máximo de mapas Grad-CAM",
+        min_value=1, max_value=len(labels), step=1, key="max_panels",
         help=(
-            "Solo se muestran las patologías cuya probabilidad supera el umbral, las más "
-            "probables primero. Baja el umbral para ver más patologías; súbelo para ver "
-            "solo las más confiadas."
+            "Límite superior de mapas Grad-CAM a generar. Solo se muestran las patologías "
+            "cuya probabilidad supera el umbral, las más probables primero; si hay menos "
+            "patologías detectadas que este límite, se muestran solo las detectadas."
         ),
     )
 
@@ -454,6 +562,13 @@ def main() -> None:
     # ==================================================================
     st.divider()
     st.subheader("Probabilidades por patología")
+    st.caption(
+        "El valor junto a cada patología es la **probabilidad de predicción** del modelo "
+        "(salida sigmoide entre 0% y 100%): la confianza estimada de que esa patología esté "
+        "presente en la radiografía, no un diagnóstico. Una patología se marca como "
+        f"**detectada** (en verde) cuando su probabilidad alcanza o supera el umbral de "
+        f"clasificación ({threshold:.2f})."
+    )
 
     # df_sorted del modelo A: se reutiliza en el informe PDF (PASO 8).
     df = pd.DataFrame({
@@ -464,75 +579,41 @@ def main() -> None:
     df_sorted = df.sort_values("Probabilidad", ascending=False).reset_index(drop=True)
 
     if probs_b is None:
-        # Un solo modelo: una gráfica + tabla.
+        # Un solo modelo: gráfica de barras y tabla (siempre visible).
         st.altair_chart(_chart_probabilidades(labels, probs, threshold), use_container_width=True)
-        with st.expander("Ver tabla de valores"):
-            df_display = df_sorted.copy()
-            df_display["Detectada"] = df_display["Detectada"].map({True: "✓", False: ""})
-
-            def _color_row(row: pd.Series) -> list[str]:
-                # Verde si la patología fue detectada; gris claro en caso contrario.
-                color = "#d4edda" if row["Detectada"] == "✓" else "#f8f9fa"
-                return [f"background-color: {color}"] * len(row)
-
-            st.dataframe(
-                df_display.style.apply(_color_row, axis=1).format({"Probabilidad": "{:.4f}"}),
-                use_container_width=True, hide_index=True,
-            )
+        st.markdown("**Tabla de probabilidades**")
+        st.dataframe(
+            _estilo_tabla_probabilidades(df_sorted), use_container_width=True, hide_index=True,
+        )
     else:
-        # Comparación: una gráfica por modelo (titulada con su nombre) + gráfica comparativa.
-        st.markdown(f"##### {modelo_label}")
-        st.altair_chart(_chart_probabilidades(labels, probs, threshold), use_container_width=True)
-        st.markdown(f"##### {modelo_label_b}")
-        st.altair_chart(_chart_probabilidades(labels_b, probs_b, threshold), use_container_width=True)
-
-        st.markdown("##### Comparación (patologías comunes)")
+        # Comparación: una única gráfica comparativa (en vez de tres gráficas).
+        st.caption(f"**A:** {modelo_label}  ·  **B:** {modelo_label_b}")
         df_cmp = _tabla_comparacion(labels, probs, labels_b, probs_b, threshold)
         if df_cmp.empty:
-            st.info("Los dos modelos no comparten patologías comparables.")
+            st.info(
+                "Los dos modelos no comparten patologías comparables; se muestra solo el modelo A."
+            )
+            st.altair_chart(
+                _chart_probabilidades(labels, probs, threshold), use_container_width=True
+            )
+            st.markdown("**Tabla de probabilidades (Modelo A)**")
+            st.dataframe(
+                _estilo_tabla_probabilidades(df_sorted), use_container_width=True, hide_index=True,
+            )
         else:
             n_ok = int(df_cmp["Coinciden"].sum())
             st.caption(
                 f"{n_ok}/{len(df_cmp)} patologías comunes con la misma decisión a umbral "
                 f"{threshold:.2f} · diferencia media |A−B| = {df_cmp['delta'].mean():.3f}"
             )
-            # Barras agrupadas (yOffset = una barra por modelo en cada patología; Altair 5+).
-            # En la leyenda se usa el nombre real de cada modelo (prefijado A/B para distinguirlos
-            # aunque coincidan), y se añade el valor al final de cada barra. La altura por patología
-            # es mayor para que las dos barras no queden demasiado finas.
-            etiqueta_a = f"A · {modelo_label}"
-            etiqueta_b = f"B · {modelo_label_b}"
-            df_long = df_cmp.melt(
-                id_vars="Patología", value_vars=["Modelo A", "Modelo B"],
-                var_name="Modelo", value_name="Probabilidad",
+            st.altair_chart(
+                _chart_comparacion(df_cmp, modelo_label, modelo_label_b),
+                use_container_width=True,
             )
-            df_long["Modelo"] = df_long["Modelo"].map({"Modelo A": etiqueta_a, "Modelo B": etiqueta_b})
-            base_cmp = alt.Chart(df_long).encode(
-                x=alt.X("Probabilidad:Q", scale=alt.Scale(domain=[0, 1.08]), title="Probabilidad"),
-                y=alt.Y("Patología:N", sort="-x", title=None,
-                        axis=alt.Axis(labelLimit=320, labelFontSize=12)),
-                yOffset="Modelo:N",
+            st.markdown("**Tabla comparativa (patologías comunes)**")
+            st.dataframe(
+                _estilo_tabla_comparacion(df_cmp), use_container_width=True, hide_index=True,
             )
-            barras_cmp = base_cmp.mark_bar().encode(
-                color=alt.Color(
-                    "Modelo:N", title="Modelo",
-                    scale=alt.Scale(domain=[etiqueta_a, etiqueta_b], range=["#1f77b4", "#ff7f0e"]),
-                    legend=alt.Legend(orient="top", labelLimit=400),
-                ),
-                tooltip=["Patología", "Modelo", alt.Tooltip("Probabilidad:Q", format=".2%")],
-            )
-            etiquetas_cmp = base_cmp.mark_text(align="left", baseline="middle", dx=3, fontSize=10).encode(
-                text=alt.Text("Probabilidad:Q", format=".0%"),
-            )
-            cmp_chart = (barras_cmp + etiquetas_cmp).properties(height=max(360, 64 * len(df_cmp)))
-            st.altair_chart(cmp_chart, use_container_width=True)
-            with st.expander("Ver tabla comparativa"):
-                st.dataframe(
-                    df_cmp.rename(columns={"delta": "|A−B|"}).style.format(
-                        {"Modelo A": "{:.3f}", "Modelo B": "{:.3f}", "|A−B|": "{:.3f}"}
-                    ),
-                    use_container_width=True, hide_index=True,
-                )
 
     # ==================================================================
     # PASO 7: EXPLICABILIDAD — original + Grad-CAM (de cada modelo si se compara)
@@ -672,7 +753,26 @@ def main() -> None:
         )
 
     # ==================================================================
-    # PASO 9: HISTORIAL DE SESIÓN
+    # PASO 9: CARACTERÍSTICAS DEL MODELO
+    # (la misma información de fiabilidad que incluye el informe PDF, también en la web)
+    # ==================================================================
+    st.divider()
+    st.subheader("Características del modelo")
+    st.caption(
+        "Arquitectura, configuración de clases e hiperparámetros de entrenamiento, y fiabilidad "
+        "medida en el conjunto de test (las mismas métricas del informe PDF)."
+    )
+    _render_model_card(
+        "Modelo" if probs_b is None else "Modelo A",
+        info["backbone"], info["class_config"], len(labels), checkpoint_path,
+    )
+    if probs_b is not None:
+        _render_model_card(
+            "Modelo B", info_b["backbone"], info_b["class_config"], len(labels_b), info_b["path"],
+        )
+
+    # ==================================================================
+    # PASO 10: HISTORIAL DE SESIÓN
     # ==================================================================
     st.divider()
     # st.session_state persiste entre re-ejecuciones del script (causadas por

@@ -1,12 +1,16 @@
 """Tests de la lógica de selección de modelo en dos pasos de la web (src/app.py)."""
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.app import (
     _CLASS_CONFIG_ORDER,
     _agrupar_modelos_por_arquitectura,
+    _chart_comparacion,
     _chart_probabilidades,
+    _estilo_tabla_comparacion,
+    _estilo_tabla_probabilidades,
     _ordenar_class_configs,
     _tabla_comparacion,
 )
@@ -106,3 +110,30 @@ def test_chart_probabilidades_devuelve_grafico_serializable():
     chart = _chart_probabilidades(["Edema", "Cardiomegaly"], np.array([0.9, 0.2]), 0.5)
     # Gráfico Altair componible: debe serializarse a dict (Vega-Lite) sin lanzar.
     assert chart.to_dict() is not None
+
+
+def test_chart_comparacion_devuelve_grafico_serializable():
+    df_cmp = _tabla_comparacion(
+        ["Edema", "Cardiomegaly"], np.array([0.9, 0.2]),
+        ["Edema", "Cardiomegaly"], np.array([0.4, 0.7]), 0.5,
+    )
+    chart = _chart_comparacion(df_cmp, "DenseNet-121 · full13", "ResNet-50 · min5pct9")
+    assert chart.to_dict() is not None
+
+
+def test_estilo_tabla_probabilidades_resalta_detectadas_en_verde():
+    df = pd.DataFrame({
+        "Patología": ["Edema", "Cardiomegaly"],
+        "Probabilidad": [0.9, 0.2],
+        "Detectada": [True, False],
+    })
+    html = _estilo_tabla_probabilidades(df).to_html()
+    # La fila detectada lleva el verde de "detectada"; el render no debe lanzar.
+    assert "#d4edda" in html
+    assert "✓ Detectada" in html
+
+
+def test_estilo_tabla_comparacion_marca_coincidencias():
+    df_cmp = _tabla_comparacion(["Edema"], np.array([0.9]), ["Edema"], np.array([0.8]), 0.5)
+    html = _estilo_tabla_comparacion(df_cmp).to_html()
+    assert "✓ Sí" in html  # ambos por encima del umbral
