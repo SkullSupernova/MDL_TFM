@@ -187,8 +187,8 @@ def _estilo_tabla_probabilidades(df_sorted):
     return tabla.style.apply(_fila, axis=1).format({"Probabilidad": "{:.1%}"})
 
 
-def _estilo_tabla_comparacion(df_cmp):
-    """Styler de la tabla comparativa: columna 'Coinciden' en verde (sí) o rojo (no)."""
+def _estilo_tabla_comparacion(df_cmp, threshold):
+    """Styler de la tabla comparativa: cada modelo en verde/rojo según supere el umbral."""
     tabla = df_cmp.rename(columns={"delta": "|A−B|", "Coinciden": "Ambos detectan"}).copy()
     tabla["Ambos detectan"] = tabla["Ambos detectan"].map({True: "✓ Sí", False: "✗ No"})
 
@@ -197,9 +197,16 @@ def _estilo_tabla_comparacion(df_cmp):
             return "background-color: #d4edda; color: #155724; font-weight: 600"
         return "background-color: #f8d7da; color: #721c24"
 
+    def _umbral(val) -> str:
+        # Verde si el modelo detecta la patología (prob >= umbral), rojo si no.
+        if val >= threshold:
+            return "background-color: #d4edda; color: #155724"
+        return "background-color: #f8d7da; color: #721c24"
+
     return (
         tabla.style
         .map(_coincide, subset=["Ambos detectan"])
+        .map(_umbral, subset=["Modelo A", "Modelo B"])
         .format({"Modelo A": "{:.1%}", "Modelo B": "{:.1%}", "|A−B|": "{:.3f}"})
     )
 
@@ -614,7 +621,7 @@ def main() -> None:
             )
             st.markdown("**Tabla comparativa (patologías comunes)**")
             st.dataframe(
-                _estilo_tabla_comparacion(df_cmp), use_container_width=True, hide_index=True,
+                _estilo_tabla_comparacion(df_cmp, threshold), use_container_width=True, hide_index=True,
             )
 
     # ==================================================================

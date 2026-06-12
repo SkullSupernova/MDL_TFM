@@ -135,5 +135,5 @@ def test_estilo_tabla_probabilidades_resalta_detectadas_en_verde():
 
 def test_estilo_tabla_comparacion_marca_coincidencias():
     df_cmp = _tabla_comparacion(["Edema"], np.array([0.9]), ["Edema"], np.array([0.8]), 0.5)
-    html = _estilo_tabla_comparacion(df_cmp).to_html()
+    html = _estilo_tabla_comparacion(df_cmp, 0.5).to_html()
     assert "✓ Sí" in html  # ambos por encima del umbral
