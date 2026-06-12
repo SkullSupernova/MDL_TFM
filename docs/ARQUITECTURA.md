@@ -259,6 +259,6 @@ construye y publica la imagen en GitHub Container Registry en push a `main`, tag
 Guía de uso paso a paso (login, pull) en [../README.md](../README.md) §2.
 
 **Streamlit Community Cloud:** la interfaz web está publicada en https://mdltfm-mvb.streamlit.app/ y redespliega
-en cada push a `main`. A diferencia de Docker, en este despliegue los tres modelos DenseNet-121 **se versionan**
-en el repositorio (~31 MB cada uno, bajo el límite de 100 MB de GitHub); no requiere `packages.txt` ni
-dependencias de sistema.
+en cada push a `main`. A diferencia de Docker, en este despliegue se **versionan** los modelos DenseNet-121
+(~31 MB) y ResNet-50 (~98 MB), bajo el límite de 100 MB de GitHub; ConvNeXt/Swin/VGG lo superan y no se
+publican. No requiere `packages.txt` ni dependencias de sistema.
