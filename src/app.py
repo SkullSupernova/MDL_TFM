@@ -648,61 +648,79 @@ def main() -> None:
     # probables primero y hasta max_panels. 'panels' (de A) se usa en el PDF/ZIP. En modo
     # comparación se genera además el Grad-CAM del modelo B para las patologías que comparte.
     panels = []
-    if detected:
-        n_show = min(len(detected), max_panels)
-        orden = np.argsort(probs)[::-1][:n_show]
+    map_a = {lab: i for i, lab in enumerate(labels)}
+    idx_b = {lab: i for i, lab in enumerate(labels_b)} if probs_b is not None else {}
+
+    # Patologías a explicar, más probables primero: las detectadas por A y, en comparación,
+    # también las detectadas por B (aunque no estén en A). De cada patología se genera el
+    # Grad-CAM del modelo que la tenga; el otro queda como None (se indica en su columna).
+    if probs_b is None:
+        orden_labels_full = [labels[int(i)] for i in np.argsort(probs)[::-1] if probs[int(i)] >= threshold]
+    else:
+        score: dict = {}
+        for i, lab in enumerate(labels):
+            if probs[i] >= threshold:
+                score[lab] = max(score.get(lab, 0.0), float(probs[i]))
+        for lab, i in idx_b.items():
+            if probs_b[i] >= threshold:
+                score[lab] = max(score.get(lab, 0.0), float(probs_b[i]))
+        orden_labels_full = sorted(score, key=score.get, reverse=True)
+
+    if orden_labels_full:
+        orden_labels = orden_labels_full[:max_panels]
         # Los transformers (Swin) requieren un reshape de las activaciones para Grad-CAM;
         # las CNN devuelven None.
         reshape_a = get_grad_cam_reshape(info["backbone"])
-        idx_b = {lab: i for i, lab in enumerate(labels_b)} if probs_b is not None else {}
         reshape_b = get_grad_cam_reshape(info_b["backbone"]) if probs_b is not None else None
         with st.spinner("Generando mapas Grad-CAM…"):
-            for idx in orden:
-                lab = labels[int(idx)]
-                # ClassifierOutputTarget necesita un índice entero, no el nombre de la clase.
-                mask = _compute_grad_cam(
-                    model, tensor, target_layers, int(idx), device, reshape_transform=reshape_a
-                )
-                # show_cam_on_image usa un colormap jet (azul→rojo): el rojo marca las zonas
-                # que más influyeron en la predicción de esa patología.
-                # heat = show_cam_on_image(img_np, mask, use_rgb=True)  # (H, W, 3) uint8
-                heatmap_rgb = apply_colormap(mask)
-                heat = overlay_heatmap(original_uint8, heatmap_rgb, alpha=0.4)
-                heat_b = None
+            for lab in orden_labels:
+                pa = heat = None
+                if lab in map_a:
+                    pa = float(probs[map_a[lab]])
+                    mask = _compute_grad_cam(
+                        model, tensor, target_layers, map_a[lab], device, reshape_transform=reshape_a
+                    )
+                    # Colormap jet (azul→rojo): el rojo marca las zonas que más influyeron.
+                    heat = overlay_heatmap(original_uint8, apply_colormap(mask), alpha=0.4)
+                pb = heat_b = None
                 if probs_b is not None and lab in idx_b:
+                    pb = float(probs_b[idx_b[lab]])
                     mask_b = _compute_grad_cam(
                         model_b, tensor, target_layers_b, idx_b[lab], device, reshape_transform=reshape_b
                     )
-                    # heat_b = show_cam_on_image(img_np, mask_b, use_rgb=True)
-                    heatmap_b_rgb = apply_colormap(mask_b)
-                    heat_b = overlay_heatmap(original_uint8, heatmap_b_rgb, alpha=0.4)
+                    heat_b = overlay_heatmap(original_uint8, apply_colormap(mask_b), alpha=0.4)
                 panels.append({
                     "label": lab,
-                    "prob": float(probs[int(idx)]),
+                    "prob": pa if pa is not None else (pb if pb is not None else 0.0),
+                    "prob_a": pa,
+                    "prob_b": pb,
                     "heatmap": heat,
                     "heatmap_b": heat_b,
                 })
-        ocultas = len(detected) - len(panels)
-        nota_tope = f" (se omiten {ocultas} por el tope de paneles)" if ocultas > 0 else ""
+        ocultas = len(orden_labels_full) - len(panels)
+        nota_tope = f" (se omiten {ocultas} por el tope de mapas)" if ocultas > 0 else ""
         st.caption(
-            f"Solo se muestran las {len(panels)} patología(s) cuya probabilidad supera el "
-            f"umbral de {threshold:.2f}{nota_tope}. Ajusta el umbral en la barra lateral. "
+            f"Se muestran {len(panels)} patología(s) detectadas (probabilidad ≥ umbral "
+            f"{threshold:.2f}){nota_tope}. Ajusta el umbral en la barra lateral. "
             "🔴 rojo = mayor influencia · 🔵 azul = menor influencia."
         )
         for p in panels:
-            if probs_b is not None and p["label"] in idx_b:
-                pb = float(probs_b[idx_b[p["label"]]])
-                st.markdown(f"**{p['label']}** — A: {p['prob'] * 100:.1f}% · B: {pb * 100:.1f}%")
-            else:
-                st.markdown(f"**{p['label']}** — {p['prob'] * 100:.1f}%")
             if probs_b is None:
+                st.markdown(f"**{p['label']}** — {p['prob_a'] * 100:.1f}%")
                 col1, col2 = st.columns(2)
                 col1.image(img_resized, use_container_width=True, caption="Original")
                 col2.image(p["heatmap"], use_container_width=True, caption="Grad-CAM")
             else:
+                partes = []
+                partes.append(f"A: {p['prob_a'] * 100:.1f}%" if p["prob_a"] is not None else "A: no tiene esta clase")
+                partes.append(f"B: {p['prob_b'] * 100:.1f}%" if p["prob_b"] is not None else "B: no tiene esta clase")
+                st.markdown(f"**{p['label']}** — " + " · ".join(partes))
                 col1, col2, col3 = st.columns(3)
                 col1.image(img_resized, use_container_width=True, caption="Original")
-                col2.image(p["heatmap"], use_container_width=True, caption="Grad-CAM · A")
+                if p["heatmap"] is not None:
+                    col2.image(p["heatmap"], use_container_width=True, caption="Grad-CAM · A")
+                else:
+                    col2.info("Patología no presente en el modelo A")
                 if p["heatmap_b"] is not None:
                     col3.image(p["heatmap_b"], use_container_width=True, caption="Grad-CAM · B")
                 else:

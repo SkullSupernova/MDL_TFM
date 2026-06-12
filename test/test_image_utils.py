@@ -98,6 +98,14 @@ def test_empaquetar_zip_comparacion_incluye_ambos_modelos():
     assert heatmaps == ["heatmap_01_Cardiomegaly_A.png", "heatmap_01_Cardiomegaly_B.png"]
 
 
+def test_empaquetar_zip_comparacion_panel_solo_modelo_b():
+    original = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
+    panels = [{"label": "Pneumonia", "heatmap": None, "heatmap_b": original.copy()}]
+    with zipfile.ZipFile(BytesIO(empaquetar_imagenes_zip(original, panels))) as zf:
+        heatmaps = sorted(n for n in zf.namelist() if n.startswith("heatmap_"))
+    assert heatmaps == ["heatmap_01_Pneumonia_B.png"]
+
+
 def test_empaquetar_zip_comparacion_panel_sin_modelo_b_exporta_solo_a():
     original = np.random.randint(0, 255, (8, 8, 3), dtype=np.uint8)
     panels = [

@@ -319,10 +319,12 @@ def build_report_pdf(contexto: Dict) -> bytes:
         cap = ParagraphStyle("cap", parent=pequeno, alignment=1)  # texto centrado
         for p in panels:
             if comparacion:
+                col_a = (_np_to_rlimage(p["heatmap"], 54) if p.get("heatmap") is not None
+                         else Paragraph("No presente en el modelo A", pequeno))
                 col_b = (_np_to_rlimage(p["heatmap_b"], 54) if p.get("heatmap_b") is not None
                          else Paragraph("No presente en el modelo B", pequeno))
                 par = Table(
-                    [[_np_to_rlimage(original, 54), _np_to_rlimage(p["heatmap"], 54), col_b],
+                    [[_np_to_rlimage(original, 54), col_a, col_b],
                      [Paragraph("Original", cap), Paragraph("Grad-CAM · A", cap), Paragraph("Grad-CAM · B", cap)]],
                     colWidths=[56 * mm, 56 * mm, 56 * mm],
                 )

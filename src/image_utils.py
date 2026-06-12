@@ -117,10 +117,13 @@ def empaquetar_imagenes_zip(original: np.ndarray, panels: List[Dict]) -> bytes:
         zf.writestr("original.png", _png_bytes(original))
         for i, p in enumerate(panels, start=1):
             label = _slug(p["label"])
+            heatmap_a = p.get("heatmap")
             heatmap_b = p.get("heatmap_b")
-            if heatmap_b is not None:
-                zf.writestr(f"heatmap_{i:02d}_{label}_A.png", _png_bytes(p["heatmap"]))
+            if heatmap_a is not None and heatmap_b is not None:
+                zf.writestr(f"heatmap_{i:02d}_{label}_A.png", _png_bytes(heatmap_a))
                 zf.writestr(f"heatmap_{i:02d}_{label}_B.png", _png_bytes(heatmap_b))
-            else:
-                zf.writestr(f"heatmap_{i:02d}_{label}.png", _png_bytes(p["heatmap"]))
+            elif heatmap_a is not None:
+                zf.writestr(f"heatmap_{i:02d}_{label}.png", _png_bytes(heatmap_a))
+            elif heatmap_b is not None:
+                zf.writestr(f"heatmap_{i:02d}_{label}_B.png", _png_bytes(heatmap_b))
     return buf.getvalue()
