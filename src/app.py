@@ -9,6 +9,7 @@ Uso:
     streamlit run src/app.py
 """
 
+import hashlib
 import sys
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import altair as alt
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
 import torch
 import yaml
@@ -222,6 +224,58 @@ def _estilo_tabla_comparacion(df_cmp, threshold):
     )
 
 
+# Modelos demasiado grandes para versionarse en GitHub (>100 MB) publicados como assets de una
+# release. Se descargan a models/ la primera vez que se seleccionan y se verifican por SHA-256.
+_RELEASE_BASE = "https://github.com/SkullSupernova/MDL_TFM/releases/download/v1.0.0"
+_REMOTE_MODELS = {
+    "mejor_modelo_convnext_tiny_min5pct9.pth": "fd79a1920b3e7fa733aa8fbc7a83783a78409d5676e1de372630e65cc2a95b98",
+    "mejor_modelo_convnext_tiny_nofracture12.pth": "a015bbf3081918a3d132aced6703485ddc971cd27ff7663dbd2d1f7bd536255f",
+    "mejor_modelo_swin_t_min5pct9.pth": "0ba0cca18ff35ec07ac8aa15d8b7124ac7d999f8647903d737fdc7ad38632529",
+    "mejor_modelo_swin_t_nofracture12.pth": "12f9ce0f79ab69466229531c9ee8b517fb450d9bc1e04390d3e2ec8cb5b7bc8f",
+    "mejor_modelo_vgg16_bn_min5pct9.pth": "c9714a0df961dca11ea3b4e2b7284db3d0f85a106d53f5ebc50f19359e1d58fa",
+    "mejor_modelo_vgg16_bn_nofracture12.pth": "9784f36946953efcf2c9e53ab8ce642d2fc2433bcd34a34e342e0f323e8a6086",
+}
+
+
+def _descargar_y_verificar(destino: Path, url: str, sha256_esperado: str) -> None:
+    """
+    Descarga un fichero a `destino` y verifica su SHA-256.
+
+    Escribe primero a un fichero temporal (`.part`) y solo lo renombra al destino final si el
+    hash coincide, de modo que un fallo o un corte de red no deje un checkpoint corrupto en disco.
+
+    Lanza
+    -----
+    ValueError
+        Si el SHA-256 del contenido descargado no coincide con el esperado.
+    """
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destino.with_name(destino.name + ".part")
+    digest = hashlib.sha256()
+    with requests.get(url, stream=True, timeout=120) as r:
+        r.raise_for_status()
+        with open(tmp, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1 << 20):
+                f.write(chunk)
+                digest.update(chunk)
+    if digest.hexdigest() != sha256_esperado:
+        tmp.unlink(missing_ok=True)
+        raise ValueError(f"El SHA-256 de '{destino.name}' no coincide con el esperado.")
+    tmp.replace(destino)
+
+
+def _asegurar_modelo_local(checkpoint_path: str) -> None:
+    """Descarga el checkpoint desde la release si no está en disco y es un modelo remoto conocido."""
+    ruta = Path(checkpoint_path)
+    if ruta.exists():
+        return
+    sha = _REMOTE_MODELS.get(ruta.name)
+    if sha is None:
+        return  # no es remoto: el control de existencia posterior dará el error adecuado
+    with st.spinner(f"Descargando {ruta.name} desde la release (puede tardar la primera vez)…"):
+        _descargar_y_verificar(ruta, f"{_RELEASE_BASE}/{ruta.name}", sha)
+
+
 def _discover_models() -> dict[str, dict]:
     """
     Busca checkpoints de producción en models/ y deduce su backbone y class_config.
@@ -233,14 +287,21 @@ def _discover_models() -> dict[str, dict]:
     """
     models_dir = Path("models")
     result = {}
-    if not models_dir.exists():
-        return result
-    for p in sorted(models_dir.glob("mejor_modelo_*.pth")):
-        if p.stem.endswith("_subset"):
-            continue  # checkpoint de smoke test, no es de producción
-        backbone, class_config = parse_checkpoint_filename(p.name)
+    if models_dir.exists():
+        for p in sorted(models_dir.glob("mejor_modelo_*.pth")):
+            if p.stem.endswith("_subset"):
+                continue  # checkpoint de smoke test, no es de producción
+            backbone, class_config = parse_checkpoint_filename(p.name)
+            label = f"{backbone} · {class_config}" if class_config else backbone
+            result[label] = {"path": str(p), "backbone": backbone, "class_config": class_config}
+    # Modelos remotos (release): se ofrecen aunque no estén en disco; se descargan al cargarlos.
+    # setdefault evita pisar un modelo que ya exista localmente con su versión remota.
+    for nombre in _REMOTE_MODELS:
+        backbone, class_config = parse_checkpoint_filename(nombre)
         label = f"{backbone} · {class_config}" if class_config else backbone
-        result[label] = {"path": str(p), "backbone": backbone, "class_config": class_config}
+        result.setdefault(label, {
+            "path": str(models_dir / nombre), "backbone": backbone, "class_config": class_config,
+        })
     return result
 
 
@@ -265,6 +326,13 @@ def _load_model(checkpoint_path: str, backbone: str, class_config: Optional[str]
     cfg["model"]["name"] = backbone
     if class_config:
         cfg["data"]["class_config"] = class_config
+
+    # Si es un modelo remoto (release) aún no presente, se descarga y verifica antes de cargar.
+    try:
+        _asegurar_modelo_local(checkpoint_path)
+    except Exception as exc:  # red caída, asset inexistente o checksum incorrecto
+        st.error(f"No se pudo obtener el modelo: {exc}")
+        st.stop()
 
     if not Path(checkpoint_path).exists():
         st.error(

@@ -9,6 +9,8 @@ from src.app import (
     _agrupar_modelos_por_arquitectura,
     _chart_comparacion,
     _chart_probabilidades,
+    _descargar_y_verificar,
+    _discover_models,
     _estilo_tabla_comparacion,
     _estilo_tabla_probabilidades,
     _ordenar_class_configs,
@@ -147,3 +149,49 @@ def test_estilo_tabla_comparacion_marca_coincidencias():
     df_cmp = _tabla_comparacion(["Edema"], np.array([0.9]), ["Edema"], np.array([0.8]), 0.5)
     html = _estilo_tabla_comparacion(df_cmp, 0.5).to_html()
     assert "✓ Sí" in html  # ambos por encima del umbral
+
+
+# --------------------------------------------------------------------------------------
+# Modelos remotos (release assets)
+# --------------------------------------------------------------------------------------
+class _FakeResp:
+    def __init__(self, data):
+        self._data = data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size=1):
+        for i in range(0, len(self._data), chunk_size):
+            yield self._data[i:i + chunk_size]
+
+
+def test_descargar_y_verificar_sha_correcto_escribe_fichero(tmp_path, monkeypatch):
+    data = b"contenido del checkpoint"
+    sha = __import__("hashlib").sha256(data).hexdigest()
+    monkeypatch.setattr("src.app.requests.get", lambda *a, **k: _FakeResp(data))
+    destino = tmp_path / "modelo.pth"
+    _descargar_y_verificar(destino, "http://x/modelo.pth", sha)
+    assert destino.read_bytes() == data
+    assert not (tmp_path / "modelo.pth.part").exists()
+
+
+def test_descargar_y_verificar_sha_incorrecto_lanza_y_no_deja_fichero(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.app.requests.get", lambda *a, **k: _FakeResp(b"datos"))
+    destino = tmp_path / "modelo.pth"
+    with pytest.raises(ValueError):
+        _descargar_y_verificar(destino, "http://x/modelo.pth", "0" * 64)
+    assert not destino.exists()
+    assert not (tmp_path / "modelo.pth.part").exists()
+
+
+def test_discover_models_incluye_los_modelos_remotos():
+    labels = _discover_models()
+    backbones = {v["backbone"] for v in labels.values()}
+    assert {"convnext_tiny", "swin_t", "vgg16_bn"} <= backbones
