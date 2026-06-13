@@ -47,7 +47,7 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 | **Resultados crudos y figuras por run** | `experiments/<run_id>/` (`plots/`, `*_per_class.csv`, `report.md`) *(local)* |
 | Índice de runs + IC bootstrap | `experiments/leaderboard.csv`, `experiments/leaderboard_ci.csv` *(local)* |
 | Métricas por clase del test | `logs/test_metrics_<backbone>_<config>.csv` *(local)* |
-| Modelos entrenados | `models/mejor_modelo_densenet121_*.pth` y `mejor_modelo_resnet50_*.pth` (versionados); ConvNeXt/Swin/VGG **locales** (>100 MB); registro en `models/best_model_registry.json` |
+| Modelos entrenados | `models/mejor_modelo_densenet121_*.pth` y `mejor_modelo_resnet50_*.pth` (versionados); ConvNeXt/Swin/VGG (>100 MB) en la **release `v1.0.0`**, descargados en runtime; registro en `models/best_model_registry.json` |
 | Datasets y transformaciones | `chexpert_csv/` (etiquetas); ETL en `src/utils.py`; transforms en `src/main.py` y `src/models.py`; imágenes en `C:/CheXpertDataset/` *(fuera del repo)* |
 | Configuración de entrenamiento | `config/config.yml` |
 | Scripts auxiliares (no son la app) | `src/preprocess_resize.py` (pre-resize), `src/bootstrap_ci.py` (IC bootstrap) |
@@ -76,7 +76,7 @@ la memoria **no hace falta re-analizar ni reentrenar nada**; toda la informació
 | `.github/workflows/` | sí | `ci.yml` (tests en CPU) y `docker-publish.yml` (publica imagen en GHCR). |
 | `Dockerfile`, `docker-compose.yml`, `docker-compose.ghcr.yml`, `.dockerignore` | sí | Despliegue. Ver §9. |
 | `requirements.txt`, `requirements-dev.txt`, `pytest.ini` | sí | Dependencias y configuración de pytest. |
-| `models/` | parcial | Los `mejor_modelo_densenet121_*.pth`, `mejor_modelo_resnet50_*.pth` y `best_model_registry.json` están en el repo; ConvNeXt/Swin/VGG (>100 MB) son **locales**. Ver §5. |
+| `models/` | parcial | Los `mejor_modelo_densenet121_*.pth`, `mejor_modelo_resnet50_*.pth` y `best_model_registry.json` están en el repo; ConvNeXt/Swin/VGG (>100 MB) en la release `v1.0.0` (descarga en runtime, `_REMOTE_MODELS` en `app.py`). Ver §5. |
 | `experiments/` | **local** | Carpeta por run + `leaderboard.csv` + `leaderboard_ci.csv`. Ver §6. |
 | `logs/` | **local** | `app.log`, `experiments.jsonl`, `test_metrics_*.csv`. |
 | `data/` | **local** | (Reservado; las imágenes reales viven fuera del repo, en `C:/CheXpertDataset/`.) |
@@ -311,7 +311,8 @@ columnas pero no elimina imágenes.
   en la imagen (se monta como volumen).
 - **Streamlit Community Cloud** — la web está publicada en https://mdltfm-mvb.streamlit.app/. Redespliega
   automáticamente en cada push a `main`. A diferencia de Docker, aquí los modelos **se versionan** en el repo
-  (DenseNet-121 ~31 MB y ResNet-50 ~98 MB; ConvNeXt/Swin/VGG superan 100 MB y no se publican). No necesita
+  (DenseNet-121 ~31 MB y ResNet-50 ~98 MB; ConvNeXt/Swin/VGG, >100 MB, se sirven como assets de la release
+  `v1.0.0` y se descargan en runtime verificando SHA-256). No necesita
   `packages.txt` ni librerías de sistema: Grad-CAM es una
   implementación propia (`src/grad_cam.py`, NumPy + Matplotlib), sin OpenCV; `requirements.txt` instala torch CPU.
 - **Arranque local sin Docker:** `streamlit run src/app.py` (web), `uvicorn src.api:app --reload` (API).

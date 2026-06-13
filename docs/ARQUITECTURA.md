@@ -260,5 +260,6 @@ Guía de uso paso a paso (login, pull) en [../README.md](../README.md) §2.
 
 **Streamlit Community Cloud:** la interfaz web está publicada en https://mdltfm-mvb.streamlit.app/ y redespliega
 en cada push a `main`. A diferencia de Docker, en este despliegue se **versionan** los modelos DenseNet-121
-(~31 MB) y ResNet-50 (~98 MB), bajo el límite de 100 MB de GitHub; ConvNeXt/Swin/VGG lo superan y no se
-publican. No requiere `packages.txt` ni dependencias de sistema.
+(~31 MB) y ResNet-50 (~98 MB), bajo el límite de 100 MB de GitHub; ConvNeXt/Swin/VGG lo superan y se sirven
+como *assets* de la release `v1.0.0`, que la app descarga a `models/` la primera vez que se seleccionan,
+verificando su SHA-256 (`_REMOTE_MODELS` en `src/app.py`). No requiere `packages.txt` ni dependencias de sistema.

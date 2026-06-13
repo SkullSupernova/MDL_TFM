@@ -100,7 +100,9 @@ docker compose -f docker-compose.ghcr.yml up
 La interfaz web está publicada en [mdltfm-mvb.streamlit.app](https://mdltfm-mvb.streamlit.app/). A diferencia
 del despliegue con Docker, aquí los modelos **sí viajan en el repositorio**: se versionan los DenseNet-121
 (~31 MB) y los ResNet-50 (~98 MB), por debajo del límite de 100 MB de GitHub. ConvNeXt, Swin y VGG16-BN
-superan ese límite y no se publican. La plataforma redespliega automáticamente en cada `git push` a `main`. Configuración:
+superan ese límite y se publican como *assets* de la release `v1.0.0`; la app los descarga a `models/` la
+primera vez que se seleccionan y verifica su SHA-256. La plataforma redespliega automáticamente en cada
+`git push` a `main`. Configuración:
 
 - **Main file path:** `src/app.py`; **branch:** `main`.
 - `requirements.txt` instala `torch`/`torchvision` en versión CPU gracias a la primera línea
