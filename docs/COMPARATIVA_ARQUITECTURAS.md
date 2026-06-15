@@ -153,6 +153,13 @@ CheXpert-5 en ambas configuraciones. Es el caso de manual de "más coste, ningú
   métrica deja de ser estrictamente insesgada; se mitiga con el margen `promotion_min_delta` y el
   historial completo.
 - **Etiquetas de entrenamiento automáticas** (CheXbert): contienen ruido frente a las de radiólogo del test.
+- **Regularización no idéntica entre arquitecturas:** todas comparten la misma cabeza de clasificación con
+  `Dropout(0.5)` (`Linear→ReLU→Dropout→Linear`, ver `src/models.py:_classifier_head`), pero ConvNeXt-Tiny y
+  Swin-Tiny incluyen además *stochastic depth* (drop_path) interna —valor por defecto de torchvision, máx.
+  0.1 y 0.2 respectivamente, creciente con la profundidad— que DenseNet-121, ResNet-50 y VGG16-BN no tienen.
+  Es la configuración idiomática de cada arquitectura, no un error, pero implica que la comparación no iguala
+  exactamente la regularización del cuerpo. Solo afecta al entrenamiento: en inferencia (`model.eval()`) tanto
+  el dropout como la stochastic depth se desactivan, por lo que las predicciones son deterministas.
 
 ---
 

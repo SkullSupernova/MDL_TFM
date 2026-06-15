@@ -207,6 +207,10 @@ Decisiones:
 3. **Gate por par `(backbone, class_config)`**: evita comparar modelos con cabezas incompatibles.
 4. **Sistema de experimentos file-based**: trazabilidad y reproducibilidad sin dependencias externas.
 5. **Pre-resize en lugar de `num_workers>0`**: solución robusta al cuello de botella de E/S en Windows.
+6. **Cabeza de clasificación común con `Dropout(0.5)`** (`Linear→ReLU→Dropout→Linear`, `_classifier_head`):
+   misma regularización de la cabeza para todos los backbones. Nota: ConvNeXt-Tiny y Swin-Tiny añaden además
+   *stochastic depth* (drop_path) interna por defecto de torchvision (máx. 0.1 y 0.2); DenseNet/ResNet/VGG no.
+   Ambas técnicas solo actúan en entrenamiento y se desactivan en inferencia. Ver §7 de la comparativa.
 
 Riesgos y mitigaciones:
 
