@@ -69,14 +69,13 @@ docker compose up
 La imagen se publica en GitHub Container Registry automáticamente al hacer `git push` a `main`
 (workflow `.github/workflows/docker-publish.yml`). Para usarla sin compilar:
 
-```bash
-# 1. Autenticarse en GHCR (paquete privado): token de GitHub con permiso read:packages.
-echo <TOKEN> | docker login ghcr.io -u <usuario_github> --password-stdin
+La imagen es **pública**, así que se descarga sin autenticación (no hace falta `docker login` ni token):
 
-# 2. Descargar la imagen ya construida.
+```bash
+# 1. Descargar la imagen ya construida (paquete público, sin autenticación).
 docker pull ghcr.io/skullsupernova/mdl_tfm:latest
 
-# 3. Ejecutar (necesitas las carpetas models/ y config/ en el directorio actual).
+# 2. Ejecutar (necesitas las carpetas models/ y config/ en el directorio actual).
 docker compose -f docker-compose.ghcr.yml up
 ```
 

@@ -4,8 +4,9 @@
 # Requisitos:
 #   1. Haber hecho 'git push' a main al menos una vez (el workflow .github/workflows/
 #      docker-publish.yml construye y publica la imagen).
-#   2. 'docker login ghcr.io' (el paquete es privado -> token con permiso read:packages).
-#   3. Tener en el directorio actual las carpetas models/ (con el checkpoint) y config/.
+#   2. Tener en el directorio actual las carpetas models/ (con el checkpoint) y config/.
+#
+# El paquete es PÚBLICO: 'docker pull' funciona sin autenticación (no hace falta docker login).
 #
 # Uso:  docker compose -f docker-compose.ghcr.yml up
 #

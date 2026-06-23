@@ -3,6 +3,10 @@ name: Publish Docker image (GHCR)
 # Construye la imagen Docker del proyecto y la publica en GitHub Container Registry.
 # El modelo (.pth) NO se incluye en la imagen (lo excluye .dockerignore); se monta
 # como volumen al ejecutar el contenedor (ver docker-compose.yml y el README).
+#
+# El GITHUB_TOKEN de abajo se usa solo para PUBLICAR (push) la imagen. El paquete GHCR es
+# PÚBLICO (visibilidad fijada manualmente en GitHub), así que descargarlo (docker pull) no
+# requiere autenticación. La visibilidad no se controla desde este workflow.
 
 on:
   push:

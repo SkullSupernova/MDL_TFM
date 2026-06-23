@@ -255,7 +255,7 @@ de ejecutar:
 - **Opción A — construir en local:** `docker compose build && docker compose up`. Servicios `api` (uvicorn,
   puerto 8000) y `webapp` (Streamlit, 8501), ambos montan `models/`, `config/` y `logs/`.
 - **Opción B — imagen publicada en GHCR:** `docker compose -f docker-compose.ghcr.yml up` (usa
-  `image: ghcr.io/skullsupernova/mdl_tfm:latest`; requiere `docker login ghcr.io`).
+  `image: ghcr.io/skullsupernova/mdl_tfm:latest`; el paquete es público, `docker pull` sin autenticación).
 
 **CI/CD (`.github/workflows/`):** `ci.yml` ejecuta la suite pytest en CPU en cada push/PR; `docker-publish.yml`
 construye y publica la imagen en GitHub Container Registry en push a `main`, tags `v*` o manualmente

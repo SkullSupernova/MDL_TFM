@@ -305,7 +305,7 @@ columnas pero no elimina imágenes.
   (streamlit, **8501**); ambos montan `models/`, `config/` y `logs/` como volúmenes. `webapp` depende de `api`.
   El montaje de `config/` permite cambiar de modelo (`model.checkpoint_path`) **sin reconstruir** la imagen.
 - **`docker-compose.ghcr.yml`** (Opción B, imagen publicada) — usa `image: ghcr.io/skullsupernova/mdl_tfm:latest`
-  en vez de `build:`. Requiere `docker login ghcr.io` (paquete privado). Uso: `docker compose -f docker-compose.ghcr.yml up`.
+  en vez de `build:`. Paquete público: `docker pull` sin autenticación. Uso: `docker compose -f docker-compose.ghcr.yml up`.
 - **`.github/workflows/docker-publish.yml`** — construye y **publica la imagen en GHCR** en push a `main`,
   tags `v*` o manualmente (`workflow_dispatch`). El `.dockerignore` excluye `models/`, así que el modelo no va
   en la imagen (se monta como volumen).
